@@ -255,7 +255,13 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     const runResult = await spawnRun(binaryPath, spawnArgs, tempFiles, {
       signal: undefined,
       onUpdate: undefined,
+      runTimeoutMs: config.runTimeoutMs,
     });
+
+    // 11.5. Check if the run timed out
+    if (runResult.timedOut) {
+      return formatBlockedResult('TIMEOUT', `Child timed out after ${config.runTimeoutMs}ms`, agentDef.name);
+    }
 
     // 12. If outputSchema was set and exit code was 0, read and validate output.json
     let structuredOutput: unknown = undefined;

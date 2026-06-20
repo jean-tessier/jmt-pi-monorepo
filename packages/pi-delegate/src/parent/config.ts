@@ -112,5 +112,12 @@ export function loadConfig(): DelegateConfig {
     config.piBinaryPath = process.env.PI_DELEGATE_BINARY_PATH;
   }
 
+  if (process.env.PI_DELEGATE_RUN_TIMEOUT_MS) {
+    const parsed = parseInt(process.env.PI_DELEGATE_RUN_TIMEOUT_MS, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      config.runTimeoutMs = parsed;
+    }
+  }
+
   return config;
 }

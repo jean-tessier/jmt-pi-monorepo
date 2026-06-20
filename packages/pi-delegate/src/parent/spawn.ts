@@ -254,7 +254,7 @@ export async function spawnRun(
   args: SpawnArgs,
   _tempFiles: TempRunFiles,
   options: RunOptions,
-): Promise<{ output: string; exitCode: number }> {
+): Promise<{ output: string; exitCode: number; timedOut?: boolean }> {
   return new Promise((resolve, reject) => {
     // Spawn the child process; child's cwd is outside the project dir
     const child = spawn(binaryPath, args.argv, {
@@ -394,7 +394,7 @@ export async function spawnRun(
       const finalOutput = output !== '' ? output : agentEndResult;
       const exitCode = child.exitCode ?? -1;
 
-      resolve({ output: finalOutput, exitCode });
+      resolve({ output: finalOutput, exitCode, timedOut });
     });
   });
 }
