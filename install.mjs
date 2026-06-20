@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // install.mjs — Copy pi-delegate and pi-structured-output to Pi's extension directory
-import { cp, mkdir, readFile } from 'fs/promises';
+import { cp, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
