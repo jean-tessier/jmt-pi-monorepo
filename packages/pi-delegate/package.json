@@ -7,7 +7,7 @@
     "yaml": "^2.4.0"
   },
   "peerDependencies": {
-    "pi": "^2.0.5"
+    "pi": "0.79.8"
   },
   "pi": {
     "extensions": [
