@@ -16,6 +16,11 @@
   "peerDependencies": {
     "pi": "0.79.8"
   },
+  "peerDependenciesMeta": {
+    "pi": {
+      "optional": true
+    }
+  },
   "pi": {
     "extensions": [
       "./src/parent/index.ts",
@@ -23,7 +28,11 @@
     ]
   },
   "engines": { "node": ">=18" },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   }
 }
