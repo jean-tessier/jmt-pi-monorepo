@@ -278,7 +278,9 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     if (structuredOutput !== undefined) {
       return formatStructuredResult(agentDef.name, structuredOutput);
     }
-    return formatOkResult(agentDef.name, runResult.output);
+    // Normalize empty/whitespace-only output to '(no output)' sentinel
+    const outputText = (runResult.output ?? '').trim() || '(no output)';
+    return formatOkResult(agentDef.name, outputText);
   } finally {
     // Cleanup (runs on both success and error)
     await tempFiles.cleanup();
