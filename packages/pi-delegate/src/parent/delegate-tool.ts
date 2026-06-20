@@ -10,7 +10,7 @@ import { loadConfig } from './config.js';
 import { findAgent } from './agents.js';
 import { resolveParams } from './resolve.js';
 import { createTempRunFiles } from './tempfiles.js';
-import { resolvePiBinary, buildSpawnArgs, spawnRun } from './spawn.js';
+import { resolvePiBinary, buildSpawnArgs, spawnRun, generateCapabilityToken } from './spawn.js';
 import { runPreflight } from './guards.js';
 import { runParallel } from './parallel.js';
 import { decodeLineagePath, encodeLineagePath, appendToPath } from '../shared/lineage.js';
@@ -163,6 +163,9 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     // 9. Resolve binary
     const binaryPath = await resolvePiBinary(config);
 
+    // Generate token for this child (child-side delegate provider reads PI_DELEGATE_TOKEN)
+    const delegateToken = generateCapabilityToken();
+
     // 10. Build spawn args
     const spawnArgs = buildSpawnArgs(resolvedParams, {
       taskId,
@@ -170,6 +173,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
       maxDepth: config.maxDepth,
       lineagePath: newPath,
       promptFile: tempFiles.promptFile,
+      delegateToken,
     });
 
     // 11. Spawn run

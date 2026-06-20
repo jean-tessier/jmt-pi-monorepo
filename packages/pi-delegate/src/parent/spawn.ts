@@ -9,6 +9,7 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { createInterface } from 'readline';
+import { randomBytes } from 'crypto';
 
 import type { DelegateConfig, RunStatus } from '../shared/types.js';
 import type { ResolvedParams } from './resolve.js';
@@ -87,6 +88,16 @@ export async function resolvePiBinary(config: DelegateConfig): Promise<string> {
   return found;
 }
 
+/**
+ * Generate a per-run high-entropy capability token that authorizes child processes
+ * to use the delegate provider.
+ *
+ * @returns A 64-character hex string (256 bits of entropy)
+ */
+export function generateCapabilityToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
 // ── Arg/env builder ───────────────────────────────────────────────────────────
 
 /** The argv array and environment variables to pass to a child pi process */
@@ -102,6 +113,7 @@ export interface SpawnContext {
   maxDepth: number;
   lineagePath: string;
   promptFile: string;      // absolute path to prompt.md from TempRunFiles
+  delegateToken: string;   // '' for ineligible children, token string for authorized ones
   outputFile?: string;     // absolute path to output.json (Task 17 sets this; optional here)
   schemaFile?: string;     // absolute path to schema.json (Task 17 sets this; optional here)
 }
@@ -153,8 +165,8 @@ export function buildSpawnArgs(
     PI_DELEGATE_MAX_DEPTH: String(context.maxDepth),
     PI_DELEGATE_PATH: context.lineagePath,
     PI_DELEGATE_TASK_ID: context.taskId,
-    // Stage 1 placeholders (overridden in Stage 2 Tasks 13/15)
-    PI_DELEGATE_TOKEN: '',
+    // Capability token: '' or real token
+    PI_DELEGATE_TOKEN: context.delegateToken,
     PI_OUTPUT_SCHEMA: '',
     PI_OUTPUT_FILE: '',
   };
