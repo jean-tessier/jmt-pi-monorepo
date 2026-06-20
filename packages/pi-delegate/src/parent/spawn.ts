@@ -217,6 +217,33 @@ export function mapExitCode(exitCode: number): RunStatus {
   return 'error';
 }
 
+// ── Sandbox wrapping ──────────────────────────────────────────────────────
+
+/**
+ * Wrap the pi binary path and arguments with a sandbox command if provided.
+ * If no sandboxCommand is set, returns the binary and args unchanged.
+ *
+ * Example: wrapWithSandbox('/usr/local/bin/pi', ['--mode', 'json', 'task'], 'firejail --quiet')
+ * Returns: ['firejail', ['--quiet', '/usr/local/bin/pi', '--mode', 'json', 'task']]
+ *
+ * @param binaryPath - Absolute path to pi binary
+ * @param args - Original argv array (does not include binary path)
+ * @param sandboxCommand - Optional space-separated command prefix (e.g. 'firejail --quiet')
+ * @returns Tuple of [actualBinary, actualArgs] to pass to spawn()
+ */
+export function wrapWithSandbox(
+  binaryPath: string,
+  args: string[],
+  sandboxCommand?: string,
+): [string, string[]] {
+  if (!sandboxCommand) return [binaryPath, args];
+
+  const parts = sandboxCommand.trim().split(/\s+/);
+  const sandboxBinary = parts[0];
+  const sandboxArgs = [...parts.slice(1), binaryPath, ...args];
+  return [sandboxBinary, sandboxArgs];
+}
+
 // ── AgentEvent types ──────────────────────────────────────────────────────────
 
 /** Events emitted by pi --mode json on stdout */
@@ -237,6 +264,8 @@ export interface RunOptions {
   signal?: AbortSignal;
   onUpdate?: (event: { type: string; agent?: string; tool?: string }) => void;
   runTimeoutMs?: number;
+  sandboxCommand?: string;  // optional sandbox wrapper
+  childCwd?: string;        // child working directory
 }
 
 /**
@@ -252,14 +281,20 @@ export interface RunOptions {
 export async function spawnRun(
   binaryPath: string,
   args: SpawnArgs,
-  _tempFiles: TempRunFiles,
+  tempFiles: TempRunFiles,
   options: RunOptions,
 ): Promise<{ output: string; exitCode: number; timedOut?: boolean }> {
   return new Promise((resolve, reject) => {
-    // Spawn the child process; child's cwd is outside the project dir
-    const child = spawn(binaryPath, args.argv, {
+    // Apply sandbox wrapping if configured
+    const [actualBinary, actualArgs] = wrapWithSandbox(binaryPath, args.argv, options.sandboxCommand);
+
+    // Determine child working directory: use override if set, otherwise temp run dir
+    const childCwd = options.childCwd ?? tempFiles.dir;
+
+    // Spawn the child process with isolated cwd
+    const child = spawn(actualBinary, actualArgs, {
       env: args.env,
-      cwd: os.tmpdir(),
+      cwd: childCwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

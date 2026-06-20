@@ -102,4 +102,5 @@ export interface DelegateConfig {
   runTimeoutMs?: number;    // per-run wall-clock timeout
   maxInFlightChildren?: number; // global concurrency cap
   sandboxCommand?: string;  // optional sandbox wrapper (e.g. 'bwrap')
+  childCwd?: string;        // override child working directory; default: temp run dir
 }

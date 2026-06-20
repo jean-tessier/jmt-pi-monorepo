@@ -256,6 +256,8 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
       signal: undefined,
       onUpdate: undefined,
       runTimeoutMs: config.runTimeoutMs,
+      sandboxCommand: config.sandboxCommand,
+      childCwd: config.childCwd,
     });
 
     // 11.5. Check if the run timed out

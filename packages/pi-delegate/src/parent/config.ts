@@ -98,6 +98,10 @@ export function loadConfig(): DelegateConfig {
     if (typeof fileConfig.sandboxCommand === 'string') {
       config.sandboxCommand = fileConfig.sandboxCommand;
     }
+
+    if (typeof fileConfig.childCwd === 'string') {
+      config.childCwd = fileConfig.childCwd;
+    }
   }
 
   // Apply env-variable overrides (highest precedence)
@@ -117,6 +121,10 @@ export function loadConfig(): DelegateConfig {
     if (!isNaN(parsed) && parsed > 0) {
       config.runTimeoutMs = parsed;
     }
+  }
+
+  if (process.env.PI_DELEGATE_CHILD_CWD) {
+    config.childCwd = process.env.PI_DELEGATE_CHILD_CWD;
   }
 
   return config;
