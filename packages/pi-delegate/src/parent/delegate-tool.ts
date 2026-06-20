@@ -13,9 +13,10 @@ import { resolveParams } from './resolve.js';
 import { createTempRunFiles } from './tempfiles.js';
 import { resolvePiBinary, buildSpawnArgs, spawnRun, generateCapabilityToken } from './spawn.js';
 import { runPreflight } from './guards.js';
+import { formatBlockedResult, formatOkResult, formatStructuredResult } from './result.js';
 import { runParallel } from './parallel.js';
 import { decodeLineagePath, encodeLineagePath, appendToPath } from '../shared/lineage.js';
-import { compileSchema, isJsonSchemaObject } from '../shared/schema.js';
+import { compileSchema } from '../shared/schema.js';
 
 // ── Pi Extension API types ────────────────────────────────────────────────────
 
@@ -157,13 +158,6 @@ function getCurrentDepth(): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
-/**
- * Format a preflight blocked result as a labeled string.
- */
-function formatBlockedResult(code: string, message: string, agentName: string): string {
-  return `[BLOCKED:${code}] from agent "${agentName}": ${message}`;
-}
-
 // ── Single-task orchestration ─────────────────────────────────────────────────
 
 async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext): Promise<string> {
@@ -173,30 +167,34 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
   // 2. Load config
   const config = loadConfig();
 
-  // 3. Find agent definition
-  let agentDef: AgentDefinition = DEFAULT_AGENT;
+  // 3. Find agent definition (preserve undefined so preflight check 6 can detect not-found)
+  let foundAgentDef: AgentDefinition | undefined = undefined;
   if ('agentName' in params && params.agentName) {
-    const found = await findAgent(params.agentName);
-    agentDef = found ?? DEFAULT_AGENT;
+    foundAgentDef = await findAgent(params.agentName) ?? undefined;
   }
+  // Use foundAgentDef for preflight; fall back to DEFAULT_AGENT only after preflight passes
+  const agentDefForPreflight: AgentDefinition | undefined = foundAgentDef;
 
   // 4. Read lineage path from environment
   const lineagePath = process.env.PI_DELEGATE_PATH ?? '';
 
-  // 4.5. Check delegateAgents allowlist (from parent's env)
+  // 4.5. Read delegateAgents allowlist (from parent's env) for preflight check 7
   const allowedAgents = process.env.PI_DELEGATE_AGENTS
     ? JSON.parse(process.env.PI_DELEGATE_AGENTS) as string[]
     : null;
 
-  if (allowedAgents && allowedAgents.length > 0 && !allowedAgents.includes(agentDef.name)) {
-    return formatBlockedResult('TOOL_NOT_PERMITTED',
-      `Agent "${agentDef.name}" is not in the caller's delegateAgents allowlist`,
-      agentDef.name
-    );
-  }
-
-  // 5. Preflight check (includes lineage cap + cycle detection)
-  const preflight = runPreflight({ params, config, agentDef, depth, lineagePath });
+  // 5. Preflight check (all 8 ordered checks, including delegateAgents allowlist)
+  const preflight = runPreflight({
+    params,
+    config,
+    agentDef: agentDefForPreflight,
+    depth,
+    lineagePath,
+    outputSchema: 'outputSchema' in params ? params.outputSchema : undefined,
+    allowedAgentNames: allowedAgents ?? undefined,
+  });
+  // Determine effective agentDef for use after preflight (fall back to DEFAULT_AGENT)
+  const agentDef: AgentDefinition = foundAgentDef ?? DEFAULT_AGENT;
   if (preflight.blocked) {
     return formatBlockedResult(preflight.code, preflight.message, agentDef.name);
   }
@@ -217,11 +215,6 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     },
     activeTools: pi.getActiveTools(),
   });
-
-  // Preflight check 5: validate outputSchema is a JSON object (before temp files)
-  if (resolvedParams.outputSchema && !isJsonSchemaObject(resolvedParams.outputSchema)) {
-    return `[BLOCKED:SCHEMA_INVALID] from agent "${agentDef.name}": outputSchema must be a JSON Schema object`;
-  }
 
   // 7. Build new lineage path (append current agent before spawning child)
   const newPath = encodeLineagePath(appendToPath(decodeLineagePath(lineagePath), agentDef.name));
@@ -268,20 +261,20 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
         const parsed = JSON.parse(raw) as unknown;
         const validator = compileSchema(resolvedParams.outputSchema);
         if (!validator.validate(parsed)) {
-          return `[BLOCKED:SCHEMA_INVALID] from agent "${agentDef.name}": output did not match schema`;
+          return formatBlockedResult('SCHEMA_INVALID', 'output did not match schema', agentDef.name);
         }
         structuredOutput = parsed;
       } catch {
         // File missing or not JSON — agent didn't call structured_output
-        return `[BLOCKED:SCHEMA_INVALID] from agent "${agentDef.name}": no structured output found (did the agent call structured_output?)`;
+        return formatBlockedResult('SCHEMA_INVALID', 'no structured output found (did the agent call structured_output?)', agentDef.name);
       }
     }
 
     // 13. Return labeled result
     if (structuredOutput !== undefined) {
-      return `from agent "${agentDef.name}" (structured): ${JSON.stringify(structuredOutput)}`;
+      return formatStructuredResult(agentDef.name, structuredOutput);
     }
-    return `from agent "${agentDef.name}": ${runResult.output}`;
+    return formatOkResult(agentDef.name, runResult.output);
   } finally {
     // Cleanup (runs on both success and error)
     await tempFiles.cleanup();
