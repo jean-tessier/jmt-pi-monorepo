@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext"
+  }
+}

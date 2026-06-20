@@ -1,0 +1,17 @@
+{
+  "name": "pi-structured-output",
+  "version": "0.1.0",
+  "type": "module",
+  "peerDependencies": {
+    "pi": "0.79.8"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

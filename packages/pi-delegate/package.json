@@ -1,0 +1,18 @@
+{
+  "name": "pi-delegate",
+  "version": "0.1.0",
+  "type": "module",
+  "peerDependencies": {
+    "pi": "0.79.8"
+  },
+  "pi": {
+    "extensions": [
+      "./src/parent/index.ts",
+      "./src/delegate-provider/index.ts"
+    ]
+  },
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
