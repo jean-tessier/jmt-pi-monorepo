@@ -1,14 +1,18 @@
 /**
  * Binary resolution + arg/env builder for pi-delegate (Task 6)
- *
- * Task 7 will add the actual child_process.spawn() call and stream handling.
+ * Child process spawn + --mode json stream parser (Task 7)
  */
 
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
+import { spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
+import { createInterface } from 'readline';
 
-import type { DelegateConfig } from '../shared/types.js';
+import type { DelegateConfig, RunStatus } from '../shared/types.js';
 import type { ResolvedParams } from './resolve.js';
+import type { TempRunFiles } from './tempfiles.js';
 
 // ── Binary resolution ─────────────────────────────────────────────────────────
 
@@ -164,4 +168,207 @@ export function buildSpawnArgs(
   }
 
   return { argv, env };
+}
+
+// ── Process cleanup helper ────────────────────────────────────────────────────
+
+/**
+ * Send SIGTERM to a child process, then SIGKILL after gracefulMs if still alive.
+ * Safe to call even if the child has already exited.
+ */
+function killChild(child: ChildProcess, gracefulMs = 5000): void {
+  if (child.exitCode !== null) return; // already exited
+  child.kill('SIGTERM');
+  const timer = setTimeout(() => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+  }, gracefulMs);
+  timer.unref(); // don't prevent Node from exiting
+}
+
+// ── Exit code mapping ─────────────────────────────────────────────────────────
+
+/**
+ * Map a child process exit code to a RunStatus.
+ * Full taxonomy is Task 19; for now all non-zero codes map to 'error'.
+ */
+export function mapExitCode(exitCode: number): RunStatus {
+  if (exitCode === 0) return 'ok';
+  if (exitCode === 2) return 'error'; // pi's own error code
+  return 'error';
+}
+
+// ── AgentEvent types ──────────────────────────────────────────────────────────
+
+/** Events emitted by pi --mode json on stdout */
+type AgentEvent =
+  | { type: 'agent_start'; agent?: string }
+  | { type: 'agent_end'; agent?: string; result?: string }
+  | { type: 'message_start' }
+  | { type: 'message_end'; content?: string }
+  | { type: 'tool_start'; tool?: string; input?: unknown }
+  | { type: 'tool_end'; tool?: string; output?: unknown }
+  | { type: 'text_delta'; text?: string }
+  | { type: string; [key: string]: unknown }; // unknown future events
+
+// ── spawnRun ──────────────────────────────────────────────────────────────────
+
+/** Options for spawnRun() */
+export interface RunOptions {
+  signal?: AbortSignal;
+  onUpdate?: (event: { type: string; agent?: string; tool?: string }) => void;
+  runTimeoutMs?: number;
+}
+
+/**
+ * Spawn a pi child process, parse its --mode json stdout stream, and resolve
+ * with the captured output and exit code.
+ *
+ * - stdout is parsed line-by-line via readline (handles partial-line buffering)
+ * - stderr is accumulated but never causes rejection
+ * - Timeout: SIGTERM → SIGKILL after 5s; rejects with { timedOut: true }
+ * - Abort signal: SIGTERM → SIGKILL after 5s; resolves with captured output so far
+ * - TempRunFiles.cleanup() is NOT called here — that's the caller's responsibility (Task 8)
+ */
+export async function spawnRun(
+  binaryPath: string,
+  args: SpawnArgs,
+  _tempFiles: TempRunFiles,
+  options: RunOptions,
+): Promise<{ output: string; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    // Spawn the child process; child's cwd is outside the project dir
+    const child = spawn(binaryPath, args.argv, {
+      env: args.env,
+      cwd: os.tmpdir(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let output = '';
+    let agentEndResult = '';
+    let stderrBuffer = '';
+    let timedOut = false;
+
+    // ── stdout: line-by-line JSON event parsing ───────────────────────────────
+    const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+
+    rl.on('line', (line) => {
+      if (!line.trim()) return; // skip empty lines
+
+      let event: AgentEvent;
+      try {
+        event = JSON.parse(line) as AgentEvent;
+      } catch {
+        // Not valid JSON — skip; could log if DEBUG is set
+        if (process.env.DEBUG) {
+          process.stderr.write(`[pi-delegate] Non-JSON stdout line: ${line}\n`);
+        }
+        return;
+      }
+
+      // Emit coarse progress for key event boundaries
+      switch (event.type) {
+        case 'agent_start':
+          options.onUpdate?.({
+            type: 'agent_start',
+            agent: (event as { type: 'agent_start'; agent?: string }).agent,
+          });
+          break;
+
+        case 'tool_start':
+          options.onUpdate?.({
+            type: 'tool_start',
+            tool: (event as { type: 'tool_start'; tool?: string }).tool,
+          });
+          break;
+
+        case 'tool_end':
+          options.onUpdate?.({
+            type: 'tool_end',
+            tool: (event as { type: 'tool_end'; tool?: string }).tool,
+          });
+          break;
+
+        case 'agent_end': {
+          const agentEndEvent = event as { type: 'agent_end'; agent?: string; result?: string };
+          // Capture result as fallback if no message_end was seen
+          if (agentEndEvent.result != null) {
+            agentEndResult = agentEndEvent.result;
+          }
+          options.onUpdate?.({
+            type: 'agent_end',
+            agent: agentEndEvent.agent,
+          });
+          break;
+        }
+
+        case 'message_end': {
+          const msgEndEvent = event as { type: 'message_end'; content?: string };
+          // message_end.content is the preferred capture source
+          if (msgEndEvent.content != null) {
+            output = msgEndEvent.content;
+          }
+          break;
+        }
+
+        default:
+          // Unknown event — ignore
+          break;
+      }
+    });
+
+    // ── stderr: accumulate for error messages ─────────────────────────────────
+    child.stderr!.on('data', (chunk: Buffer) => {
+      stderrBuffer += chunk.toString();
+    });
+
+    // ── Timeout handling ──────────────────────────────────────────────────────
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    if (options.runTimeoutMs != null && options.runTimeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        killChild(child);
+      }, options.runTimeoutMs);
+    }
+
+    // ── Abort signal handling ─────────────────────────────────────────────────
+    const abortHandler = (): void => {
+      killChild(child);
+      // Resolve (not reject) with whatever was captured so far
+      // The child 'close' event will fire and settle the promise normally.
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        // Signal already fired before we even started — kill immediately
+        killChild(child);
+      } else {
+        options.signal.addEventListener('abort', abortHandler, { once: true });
+      }
+    }
+
+    // ── Child error (e.g. binary not found) ───────────────────────────────────
+    child.on('error', (err) => {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener('abort', abortHandler);
+      reject(err);
+    });
+
+    // ── Child exit ────────────────────────────────────────────────────────────
+    child.on('close', (_code, _signal) => {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener('abort', abortHandler);
+
+      if (timedOut) {
+        // eslint-disable-next-line prefer-promise-reject-errors
+        reject({ timedOut: true, stderr: stderrBuffer });
+        return;
+      }
+
+      // Use message_end.content if captured; fall back to agent_end.result
+      const finalOutput = output !== '' ? output : agentEndResult;
+      const exitCode = child.exitCode ?? -1;
+
+      resolve({ output: finalOutput, exitCode });
+    });
+  });
 }
