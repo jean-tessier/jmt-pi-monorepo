@@ -247,6 +247,7 @@ export async function spawnRun(
     let agentEndResult = '';
     let stderrBuffer = '';
     let timedOut = false;
+    let settled = false;
 
     // ── stdout: line-by-line JSON event parsing ───────────────────────────────
     const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
@@ -325,6 +326,7 @@ export async function spawnRun(
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     if (options.runTimeoutMs != null && options.runTimeoutMs > 0) {
       timeoutHandle = setTimeout(() => {
+        if (settled) return;
         timedOut = true;
         killChild(child);
       }, options.runTimeoutMs);
@@ -348,6 +350,8 @@ export async function spawnRun(
 
     // ── Child error (e.g. binary not found) ───────────────────────────────────
     child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       options.signal?.removeEventListener('abort', abortHandler);
       reject(err);
@@ -355,6 +359,8 @@ export async function spawnRun(
 
     // ── Child exit ────────────────────────────────────────────────────────────
     child.on('close', (_code, _signal) => {
+      if (settled) return;
+      settled = true;
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       options.signal?.removeEventListener('abort', abortHandler);
 
