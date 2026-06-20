@@ -50,7 +50,7 @@ function applyToolCeiling(requested: string[], activeTools: string[]): string[] 
 }
 
 /** §8.4 lever 1: soft output directive appended when an outputSchema is present */
-const SOFT_OUTPUT_DIRECTIVE =
+export const SOFT_OUTPUT_DIRECTIVE =
   '\n\nWhen you have completed the task, call the structured_output tool with your result matching the provided schema.';
 
 /**
