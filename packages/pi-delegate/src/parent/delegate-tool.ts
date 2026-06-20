@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import type { AgentDefinition, DelegateToolParams, ParallelTask } from '../shared/types.js';
 import { loadConfig } from './config.js';
 import { findAgent } from './agents.js';
-import { resolveParams, resolveMaxDepth } from './resolve.js';
+import { resolveParams, resolveMaxDepth, checkToolCeiling } from './resolve.js';
 import { createTempRunFiles } from './tempfiles.js';
 import { resolvePiBinary, buildSpawnArgs, spawnRun, generateCapabilityToken } from './spawn.js';
 import { runPreflight } from './guards.js';
@@ -62,7 +62,7 @@ const DELEGATE_TOOL_SCHEMA: ToolSchema = {
         type: 'string',
         description: 'The task description to give the sub-agent.'
       },
-      agentName: {
+      agent: {
         type: 'string',
         description: 'The name of the agent definition to use. Omit to use a default general-purpose agent.'
       },
@@ -75,13 +75,14 @@ const DELEGATE_TOOL_SCHEMA: ToolSchema = {
         items: { type: 'string' },
         description: 'Override the tool allowlist for this run.'
       },
-      systemPrompt: {
+      prompt: {
         type: 'string',
-        description: 'Replace the agent\'s system prompt entirely.'
+        description: 'Override the agent\'s system prompt.'
       },
-      systemPromptAppend: {
+      promptMode: {
         type: 'string',
-        description: 'Append this text to the agent\'s system prompt.'
+        enum: ['replace', 'append'],
+        description: 'How the prompt interacts with the agent\'s system prompt. "replace" (default) replaces it entirely; "append" appends to it.'
       },
       outputSchema: {
         type: 'object',
@@ -175,8 +176,8 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
 
   // 3. Find agent definition (preserve undefined so preflight check 6 can detect not-found)
   let foundAgentDef: AgentDefinition | undefined = undefined;
-  if ('agentName' in params && params.agentName) {
-    foundAgentDef = await findAgent(params.agentName) ?? undefined;
+  if ('agent' in params && params.agent) {
+    foundAgentDef = await findAgent(params.agent) ?? undefined;
   }
   // Use foundAgentDef for preflight; fall back to DEFAULT_AGENT only after preflight passes
   const agentDefForPreflight: AgentDefinition | undefined = foundAgentDef;
@@ -219,12 +220,27 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     callParams: {
       model: 'model' in params ? params.model : undefined,
       tools: 'tools' in params ? params.tools : undefined,
-      systemPrompt: 'systemPrompt' in params ? params.systemPrompt : undefined,
-      systemPromptAppend: 'systemPromptAppend' in params ? params.systemPromptAppend : undefined,
+      prompt: 'prompt' in params ? params.prompt : undefined,
+      promptMode: 'promptMode' in params ? params.promptMode : undefined,
       outputSchema: 'outputSchema' in params ? params.outputSchema : undefined,
     },
     activeTools: pi.getActiveTools(),
   });
+
+  // Fix 5: Tool ceiling — check that every requested tool is within the parent's ceiling
+  // (SPEC §8.2: a request for a tool outside the ceiling MUST yield TOOL_NOT_PERMITTED)
+  const activeTools = pi.getActiveTools();
+  if (activeTools.length > 0) {
+    const requestedTools = 'tools' in params && params.tools ? params.tools : (agentDef.tools ?? []);
+    const filteredRequested = requestedTools.filter((t: string) => t !== 'delegate');
+    const outOfCeiling = checkToolCeiling(filteredRequested, activeTools);
+    if (outOfCeiling) {
+      return formatBlockedResult('TOOL_NOT_PERMITTED',
+        `Tool "${outOfCeiling}" is outside the parent's tool ceiling`,
+        agentDef.name
+      );
+    }
+  }
 
   // 7. Build new lineage path (append current agent before spawning child)
   const newPath = encodeLineagePath(appendToPath(decodeLineagePath(lineagePath), agentDef.name));
@@ -254,6 +270,8 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
       maxDepth: effectiveMaxDepth,
       lineagePath: newPath,
       promptFile: tempFiles.promptFile,
+      task,
+      promptMode: resolvedParams.promptMode,
       delegateToken,
       extensionPaths,
       schemaFile: resolvedParams.outputSchema ? tempFiles.schemaFile : undefined,
@@ -323,8 +341,18 @@ async function executeParallel(
     },
     async (task, _index, _signal) => {
       // Re-use executeSingle by constructing a single-task params object
+      // Forward all per-run fields per SPEC §4.2
+      const tools = Array.isArray(task.tools) ? task.tools : (task.tools ? [task.tools] : undefined);
       return executeSingle(
-        { task: task.task, agentName: task.agentName, outputSchema: task.outputSchema },
+        {
+          task: task.task,
+          agent: task.agent,
+          model: task.model,
+          tools,
+          prompt: task.prompt,
+          promptMode: task.promptMode,
+          outputSchema: task.outputSchema,
+        },
         pi
       );
     }

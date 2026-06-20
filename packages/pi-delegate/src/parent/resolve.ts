@@ -18,6 +18,7 @@ export interface ResolvedParams {
   model?: string;
   tools: string[];
   systemPrompt?: string;
+  promptMode: 'replace' | 'append';
   outputSchema?: object;
 }
 
@@ -27,8 +28,8 @@ export interface ResolveInput {
   callParams: {
     model?: string;
     tools?: string[];
-    systemPrompt?: string;
-    systemPromptAppend?: string;
+    prompt?: string;
+    promptMode?: 'replace' | 'append';
     outputSchema?: object;
   };
   /** Parent's active tool list — used as a ceiling for child tools */
@@ -47,6 +48,21 @@ function applyToolCeiling(requested: string[], activeTools: string[]): string[] 
   if (activeTools.length === 0) return filtered;
   // Intersect: only tools in both lists
   return filtered.filter((t) => activeTools.includes(t));
+}
+
+/**
+ * Check that every requested tool is within the ceiling (activeTools).
+ * Returns the name of the first out-of-ceiling tool, or null if all OK.
+ * Only called when activeTools is non-empty (i.e., a ceiling exists).
+ */
+export function checkToolCeiling(
+  requestedTools: string[],
+  ceiling: string[]
+): string | null {
+  for (const tool of requestedTools) {
+    if (!ceiling.includes(tool)) return tool;
+  }
+  return null;
 }
 
 /** §8.4 lever 1: soft output directive appended when an outputSchema is present */
@@ -88,27 +104,31 @@ export function resolveParams(input: ResolveInput): ResolvedParams {
   const requestedTools: string[] = callParams.tools ?? agentDef.tools ?? [];
   const tools: string[] = applyToolCeiling(requestedTools, activeTools);
 
+  // ── promptMode ────────────────────────────────────────────────────────────
+  // Default is 'replace'; caller can pass 'append' to append to agent def's prompt
+  const promptMode: 'replace' | 'append' = callParams.promptMode ?? 'replace';
+
   // ── systemPrompt ──────────────────────────────────────────────────────────
   // §8.3 prompt composition:
-  //   1. Start with agentDef.systemPrompt
-  //   2. If callParams.systemPrompt is provided, it *replaces* the agent def's prompt
-  //   3. If callParams.systemPromptAppend is provided, append after a double-newline
+  //   promptMode === 'replace': callParams.prompt replaces agent def's prompt
+  //   promptMode === 'append': callParams.prompt is appended to agent def's prompt
   let systemPrompt: string | undefined;
 
-  if (callParams.systemPrompt !== undefined) {
-    // Per-call override replaces agent def's prompt entirely
-    systemPrompt = callParams.systemPrompt;
-  } else {
-    // Start with agent def's prompt
-    systemPrompt = agentDef.systemPrompt;
-  }
-
-  if (callParams.systemPromptAppend !== undefined) {
-    if (systemPrompt !== undefined) {
-      systemPrompt = systemPrompt + '\n\n' + callParams.systemPromptAppend;
+  if (callParams.prompt !== undefined) {
+    if (promptMode === 'append') {
+      // Append callParams.prompt after agent def's prompt
+      if (agentDef.systemPrompt !== undefined) {
+        systemPrompt = agentDef.systemPrompt + '\n\n' + callParams.prompt;
+      } else {
+        systemPrompt = callParams.prompt;
+      }
     } else {
-      systemPrompt = callParams.systemPromptAppend;
+      // 'replace': per-call prompt replaces agent def's prompt entirely
+      systemPrompt = callParams.prompt;
     }
+  } else {
+    // No per-call prompt; use agent def's prompt as-is
+    systemPrompt = agentDef.systemPrompt;
   }
 
   // ── outputSchema ──────────────────────────────────────────────────────────
@@ -127,5 +147,5 @@ export function resolveParams(input: ResolveInput): ResolvedParams {
     }
   }
 
-  return { model, tools, systemPrompt, outputSchema };
+  return { model, tools, systemPrompt, promptMode, outputSchema };
 }

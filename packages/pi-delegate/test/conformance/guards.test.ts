@@ -56,8 +56,8 @@ describe('preflight guards', () => {
     if (result.blocked) expect(result.code).toBe('SCHEMA_INVALID');
   });
 
-  it('INVALID_PARAMS: agentName specified but not found', () => {
-    const result = runPreflight({ ...BASE_CTX, params: { task: 'do it', agentName: 'missing' }, agentDef: undefined });
+  it('INVALID_PARAMS: agent specified but not found', () => {
+    const result = runPreflight({ ...BASE_CTX, params: { task: 'do it', agent: 'missing' }, agentDef: undefined });
     expect(result.blocked).toBe(true);
     if (result.blocked) expect(result.code).toBe('INVALID_PARAMS');
   });

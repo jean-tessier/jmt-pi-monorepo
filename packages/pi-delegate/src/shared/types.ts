@@ -67,7 +67,11 @@ export interface RunResult {
  */
 export interface ParallelTask {
   task: string;             // the task description/prompt
-  agentName?: string;       // which agent definition to use
+  agent?: string;           // which agent definition to use
+  model?: string;           // per-task model override
+  tools?: string[] | string; // per-task tool allowlist override
+  prompt?: string;          // per-task system prompt (replaces agent def's prompt)
+  promptMode?: 'replace' | 'append'; // how prompt interacts with agent def's prompt
   outputSchema?: object;    // per-task schema override
 }
 
@@ -77,19 +81,19 @@ export interface ParallelTask {
 export type DelegateToolParams =
   | {
       task: string;          // single task description
-      agentName?: string;
+      agent?: string;
       outputSchema?: object;
       model?: string;              // per-call model override
       tools?: string[];            // per-call tool allowlist override
-      systemPrompt?: string;       // per-call system prompt (replaces agent def's prompt)
-      systemPromptAppend?: string; // per-call text to append to the system prompt
+      prompt?: string;             // per-call system prompt (replaces agent def's prompt)
+      promptMode?: 'replace' | 'append'; // how prompt interacts with agent def's prompt
       parallel?: never;
     }
   | {
       parallel: ParallelTask[]; // array of parallel tasks
       concurrency?: number;
       task?: never;
-      agentName?: never;
+      agent?: never;
       outputSchema?: never;
     };
 

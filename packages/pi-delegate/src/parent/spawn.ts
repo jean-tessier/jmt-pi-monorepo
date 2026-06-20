@@ -112,6 +112,8 @@ export interface SpawnContext {
   maxDepth: number;
   lineagePath: string;
   promptFile: string;      // absolute path to prompt.md from TempRunFiles
+  task: string;            // the task string — passed as a positional arg to pi (SPEC §3.2)
+  promptMode: 'replace' | 'append'; // selects --system-prompt vs --append-system-prompt
   delegateToken: string;   // '' for ineligible children, token string for authorized ones
   outputFile?: string;     // absolute path to output.json (Task 17 sets this; optional here)
   schemaFile?: string;     // absolute path to schema.json (Task 17 sets this; optional here)
@@ -145,8 +147,12 @@ export function buildSpawnArgs(
   }
 
   if (resolvedParams.systemPrompt) {
-    // Pass the file path, not the text inline
-    argv.push('--append-system-prompt', context.promptFile);
+    // Select flag based on promptMode (SPEC §3.2)
+    if (context.promptMode === 'append') {
+      argv.push('--append-system-prompt', context.promptFile);
+    } else {
+      argv.push('--system-prompt', context.promptFile);
+    }
   }
 
   // Always present
@@ -158,9 +164,14 @@ export function buildSpawnArgs(
     argv.push('--output-file', context.outputFile);
   }
 
+  // SPEC §3.4: --no-extensions baseline before any --extensions (child loads ONLY specified providers)
+  argv.push('--no-extensions');
   if (context.extensionPaths && context.extensionPaths.length > 0) {
     argv.push('--extensions', ...context.extensionPaths);
   }
+
+  // SPEC §3.2: task string MUST be passed as positional argument, never interpolated into a flag
+  argv.push(context.task);
 
   // ── env ─────────────────────────────────────────────────────────────────────
   const env: NodeJS.ProcessEnv = {

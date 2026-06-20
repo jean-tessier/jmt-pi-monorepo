@@ -84,7 +84,7 @@ export async function runParallel(
     } catch (err) {
       results[idx] = {
         index: idx,
-        output: `[BLOCKED:ERROR] from agent "${task.agentName ?? 'unknown'}": ${err instanceof Error ? err.message : String(err)}`,
+        output: `[BLOCKED:ERROR] from agent "${task.agent ?? 'unknown'}": ${err instanceof Error ? err.message : String(err)}`,
         status: 'error',
       };
       // Abort siblings on first error (only if failFast is enabled)

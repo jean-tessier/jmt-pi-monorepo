@@ -71,14 +71,14 @@ export function runPreflight(ctx: PreflightContext): PreflightResult {
     return { blocked: true, code: 'SCHEMA_INVALID', message: 'outputSchema must be a JSON Schema object' };
   }
 
-  // Check 6: agent resolution — if agentName was specified but agentDef is undefined
-  if (ctx.params.agentName && !ctx.agentDef) {
-    return { blocked: true, code: 'INVALID_PARAMS', message: `Agent "${ctx.params.agentName}" not found` };
+  // Check 6: agent resolution — if agent was specified but agentDef is undefined
+  if (ctx.params.agent && !ctx.agentDef) {
+    return { blocked: true, code: 'INVALID_PARAMS', message: `Agent "${ctx.params.agent}" not found` };
   }
 
   // Check 7: delegateAgents allowlist
   if (ctx.allowedAgentNames && ctx.allowedAgentNames.length > 0) {
-    const targetName = ctx.agentDef?.name ?? ctx.params.agentName ?? 'default';
+    const targetName = ctx.agentDef?.name ?? ctx.params.agent ?? 'default';
     if (!ctx.allowedAgentNames.includes(targetName)) {
       return { blocked: true, code: 'TOOL_NOT_PERMITTED', message: `Agent "${targetName}" not in delegateAgents allowlist` };
     }
