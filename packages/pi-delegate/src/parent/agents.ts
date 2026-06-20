@@ -193,7 +193,7 @@ function buildAgentDefinition(filePath: string): AgentDefinition | null {
   const def: AgentDefinition = {
     name,
     filePath,
-    systemPrompt: body || undefined,
+    systemPrompt: body.length > 0 ? body : undefined,
   };
 
   if (typeof frontmatter.description === 'string') {
