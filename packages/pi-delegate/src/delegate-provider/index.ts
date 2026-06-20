@@ -15,7 +15,6 @@ export function activate(pi: PiExtensionContext): void {
     return;
   }
   // Authorized — register full delegate tool (re-use parent's activate)
-  // TODO Task 18: check delegateAgents allowlist before registering
   parentActivate(pi);
 }
 

@@ -18,7 +18,7 @@ export interface PreflightContext {
 
 export type PreflightResult =
   | { blocked: false }
-  | { blocked: true; code: 'DEPTH_BLOCKED' | 'INVALID_PARAMS' | 'CYCLE_DETECTED' | 'SCHEMA_INVALID'; message: string };
+  | { blocked: true; code: 'DEPTH_BLOCKED' | 'INVALID_PARAMS' | 'CYCLE_DETECTED' | 'SCHEMA_INVALID' | 'TOOL_NOT_PERMITTED'; message: string };
 
 /** Ordered preflight checks. Returns first failure. */
 export function runPreflight(ctx: PreflightContext): PreflightResult {

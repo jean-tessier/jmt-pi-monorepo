@@ -117,6 +117,7 @@ export interface SpawnContext {
   outputFile?: string;     // absolute path to output.json (Task 17 sets this; optional here)
   schemaFile?: string;     // absolute path to schema.json (Task 17 sets this; optional here)
   extensionPaths?: string[]; // paths to extension files to pass via --extensions
+  delegateAgents?: string[]; // agent names this agent is allowed to delegate to
 }
 
 /**
@@ -174,6 +175,8 @@ export function buildSpawnArgs(
     PI_DELEGATE_TOKEN: context.delegateToken,
     PI_OUTPUT_SCHEMA: '',
     PI_OUTPUT_FILE: '',
+    // delegateAgents allowlist (if the current agent has restrictions)
+    PI_DELEGATE_AGENTS: context.delegateAgents ? JSON.stringify(context.delegateAgents) : '',
   };
 
   // Override placeholders if values are available

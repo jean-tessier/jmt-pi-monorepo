@@ -183,6 +183,18 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
   // 4. Read lineage path from environment
   const lineagePath = process.env.PI_DELEGATE_PATH ?? '';
 
+  // 4.5. Check delegateAgents allowlist (from parent's env)
+  const allowedAgents = process.env.PI_DELEGATE_AGENTS
+    ? JSON.parse(process.env.PI_DELEGATE_AGENTS) as string[]
+    : null;
+
+  if (allowedAgents && allowedAgents.length > 0 && !allowedAgents.includes(agentDef.name)) {
+    return formatBlockedResult('TOOL_NOT_PERMITTED',
+      `Agent "${agentDef.name}" is not in the caller's delegateAgents allowlist`,
+      agentDef.name
+    );
+  }
+
   // 5. Preflight check (includes lineage cap + cycle detection)
   const preflight = runPreflight({ params, config, agentDef, depth, lineagePath });
   if (preflight.blocked) {
@@ -239,6 +251,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
       extensionPaths,
       schemaFile: resolvedParams.outputSchema ? tempFiles.schemaFile : undefined,
       outputFile: resolvedParams.outputSchema ? tempFiles.outputFile : undefined,
+      delegateAgents: agentDef.delegateAgents,
     });
 
     // 11. Spawn run
