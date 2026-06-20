@@ -78,6 +78,10 @@ export type DelegateToolParams =
       task: string;          // single task description
       agentName?: string;
       outputSchema?: object;
+      model?: string;              // per-call model override
+      tools?: string[];            // per-call tool allowlist override
+      systemPrompt?: string;       // per-call system prompt (replaces agent def's prompt)
+      systemPromptAppend?: string; // per-call text to append to the system prompt
       parallel?: never;
     }
   | {
