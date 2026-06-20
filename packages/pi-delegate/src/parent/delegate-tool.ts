@@ -5,13 +5,14 @@
  * the `delegate` tool and a before_agent_start capability note hook.
  */
 
-import type { AgentDefinition, DelegateToolParams } from '../shared/types.js';
+import type { AgentDefinition, DelegateToolParams, ParallelTask } from '../shared/types.js';
 import { loadConfig } from './config.js';
 import { findAgent } from './agents.js';
 import { resolveParams } from './resolve.js';
 import { createTempRunFiles } from './tempfiles.js';
 import { resolvePiBinary, buildSpawnArgs, spawnRun } from './spawn.js';
 import { runPreflight } from './guards.js';
+import { runParallel } from './parallel.js';
 
 // ── Pi Extension API types ────────────────────────────────────────────────────
 
@@ -178,6 +179,33 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
   }
 }
 
+// ── Parallel fan-out orchestration ───────────────────────────────────────────
+
+async function executeParallel(
+  params: DelegateToolParams & { parallel: ParallelTask[] },
+  pi: PiExtensionContext
+): Promise<string> {
+  const config = loadConfig();
+  const results = await runParallel(
+    params.parallel,
+    {
+      concurrency: params.concurrency,
+      maxInFlightChildren: config.maxInFlightChildren,
+      signal: undefined,
+    },
+    async (task, _index, _signal) => {
+      // Re-use executeSingle by constructing a single-task params object
+      return executeSingle(
+        { task: task.task, agentName: task.agentName, outputSchema: task.outputSchema },
+        pi
+      );
+    }
+  );
+
+  // Format: one labeled block per result, separated by blank lines
+  return results.map(r => r.output).join('\n\n');
+}
+
 // ── Extension activation ──────────────────────────────────────────────────────
 
 export function activate(pi: PiExtensionContext): void {
@@ -192,6 +220,10 @@ export function activate(pi: PiExtensionContext): void {
 
   // Register the delegate tool
   pi.registerTool('delegate', DELEGATE_TOOL_SCHEMA, async (params) => {
-    return executeSingle(params as DelegateToolParams, pi);
+    const typed = params as DelegateToolParams;
+    if ('parallel' in typed && Array.isArray(typed.parallel)) {
+      return executeParallel(typed as DelegateToolParams & { parallel: ParallelTask[] }, pi);
+    }
+    return executeSingle(typed, pi);
   });
 }
