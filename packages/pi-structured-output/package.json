@@ -1,7 +1,14 @@
 {
   "name": "pi-structured-output",
   "version": "0.1.0",
+  "description": "Pi extension: structured output capture for child Pi agents",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "keywords": ["pi", "extension", "structured-output", "ai-agent"],
+  "license": "MIT",
   "peerDependencies": {
     "pi": "0.79.8"
   },

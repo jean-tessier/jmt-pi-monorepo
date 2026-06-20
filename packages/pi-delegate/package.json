@@ -1,7 +1,14 @@
 {
   "name": "pi-delegate",
   "version": "0.1.0",
+  "description": "Pi extension: delegate tool for spawning child Pi agents",
   "type": "module",
+  "exports": {
+    ".": "./src/parent/index.ts"
+  },
+  "files": ["src", "agents"],
+  "keywords": ["pi", "extension", "delegate", "ai-agent"],
+  "license": "MIT",
   "dependencies": {
     "@sinclair/typebox": "^0.34.0",
     "yaml": "^2.4.0"
