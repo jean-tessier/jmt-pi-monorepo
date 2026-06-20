@@ -11,6 +11,7 @@ import { findAgent } from './agents.js';
 import { resolveParams } from './resolve.js';
 import { createTempRunFiles } from './tempfiles.js';
 import { resolvePiBinary, buildSpawnArgs, spawnRun } from './spawn.js';
+import { runPreflight } from './guards.js';
 
 // ── Pi Extension API types ────────────────────────────────────────────────────
 
@@ -88,15 +89,31 @@ const DEFAULT_AGENT: AgentDefinition = {
   description: 'General-purpose agent',
 };
 
+// ── Helper functions ─────────────────────────────────────────────────────────
+
+/**
+ * Read the current delegation depth from the environment.
+ * Defaults to 0 if not set or invalid.
+ */
+function getCurrentDepth(): number {
+  const raw = process.env.PI_DELEGATE_DEPTH;
+  if (!raw) return 0;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
+ * Format a preflight blocked result as a labeled string.
+ */
+function formatBlockedResult(code: string, message: string, agentName: string): string {
+  return `[BLOCKED:${code}] from agent "${agentName}": ${message}`;
+}
+
 // ── Single-task orchestration ─────────────────────────────────────────────────
 
 async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext): Promise<string> {
-  // params must be the single-task variant (has `task` field)
-  if (!('task' in params) || params.task === undefined) {
-    throw new Error('delegate: missing required parameter "task"');
-  }
-
-  const taskId = crypto.randomUUID();
+  // 1. Get current depth
+  const depth = getCurrentDepth();
 
   // 2. Load config
   const config = loadConfig();
@@ -108,7 +125,17 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     agentDef = found ?? DEFAULT_AGENT;
   }
 
-  // 4. Resolve params
+  // 4. Preflight check
+  const preflight = runPreflight({ params, config, agentDef, depth });
+  if (preflight.blocked) {
+    return formatBlockedResult(preflight.code, preflight.message, agentDef.name);
+  }
+
+  // At this point, preflight has verified that params.task is a non-empty string
+  const task = (params as { task: string }).task;
+  const taskId = crypto.randomUUID();
+
+  // 5. Resolve params
   const resolvedParams = resolveParams({
     agentDef,
     callParams: {
@@ -121,32 +148,32 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     activeTools: pi.getActiveTools(),
   });
 
-  // 5. Create temp files
-  const tempFiles = await createTempRunFiles(taskId, params.task);
+  // 6. Create temp files
+  const tempFiles = await createTempRunFiles(taskId, task);
 
   try {
-    // 6. Resolve binary
+    // 7. Resolve binary
     const binaryPath = await resolvePiBinary(config);
 
-    // 7. Build spawn args
+    // 8. Build spawn args
     const spawnArgs = buildSpawnArgs(resolvedParams, {
       taskId,
-      depth: 0,
+      depth,
       maxDepth: config.maxDepth,
       lineagePath: '',
       promptFile: tempFiles.promptFile,
     });
 
-    // 8. Spawn run
+    // 9. Spawn run
     const { output } = await spawnRun(binaryPath, spawnArgs, tempFiles, {
       signal: undefined,
       onUpdate: undefined,
     });
 
-    // 10. Return labeled result
+    // 11. Return labeled result
     return `from agent "${agentDef.name}": ${output}`;
   } finally {
-    // 9. Cleanup (runs on both success and error)
+    // 10. Cleanup (runs on both success and error)
     await tempFiles.cleanup();
   }
 }
