@@ -42,7 +42,6 @@ export async function runDoctor(): Promise<string> {
 
   // Check 3: parent provider file exists
   try {
-    const parentProviderUrl = new URL('../parent/index.js', import.meta.url);
     await fs.access(new URL('../parent/index.ts', import.meta.url).pathname);
     checks.push({ name: 'parent provider', passed: true, message: `found` });
   } catch {
