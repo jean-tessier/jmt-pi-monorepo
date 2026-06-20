@@ -1,2 +1,4 @@
-// Stub — implementation in Tasks 2–21
-export default {};
+import type { PiExtensionContext } from './delegate-tool.js';
+import { activate } from './delegate-tool.js';
+
+export default { activate };
