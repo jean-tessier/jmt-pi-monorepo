@@ -83,6 +83,57 @@ const DELEGATE_TOOL_SCHEMA: ToolSchema = {
   }
 };
 
+// ── Extension path resolution ─────────────────────────────────────────────────
+
+/**
+ * Resolve the path to the pi-structured-output provider's index.ts.
+ * This file is at packages/pi-delegate/src/parent/delegate-tool.ts, so
+ * pi-structured-output/src/index.ts is four levels up then into that package.
+ */
+function resolveSoProvider(): string | undefined {
+  try {
+    return new URL('../../../../pi-structured-output/src/index.ts', import.meta.url).pathname;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the path to the delegate-provider's index.ts.
+ * This file is at packages/pi-delegate/src/parent/delegate-tool.ts, so
+ * delegate-provider/index.ts is one directory up from here.
+ */
+function resolveDelegateProvider(): string | undefined {
+  try {
+    return new URL('../delegate-provider/index.ts', import.meta.url).pathname;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Determine which extension files to pass to the child based on what it is granted.
+ *
+ * @param _agentDef - The agent definition (reserved for future per-agent filtering)
+ * @param hasToken  - Whether the child has a delegate capability token
+ * @returns Array of absolute paths to extension files
+ */
+function selectExtensions(_agentDef: AgentDefinition, hasToken: boolean): string[] {
+  const extensions: string[] = [];
+
+  // Always include the structured-output provider
+  const soProviderPath = resolveSoProvider();
+  if (soProviderPath) extensions.push(soProviderPath);
+
+  // Add delegate provider only if the child has a token
+  if (hasToken) {
+    const delegateProviderPath = resolveDelegateProvider();
+    if (delegateProviderPath) extensions.push(delegateProviderPath);
+  }
+
+  return extensions;
+}
+
 // ── Default agent ─────────────────────────────────────────────────────────────
 
 const DEFAULT_AGENT: AgentDefinition = {
@@ -166,6 +217,10 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     // Generate token for this child (child-side delegate provider reads PI_DELEGATE_TOKEN)
     const delegateToken = generateCapabilityToken();
 
+    // Determine which extensions to load for this child
+    const hasToken = delegateToken.length > 0;
+    const extensionPaths = selectExtensions(agentDef, hasToken);
+
     // 10. Build spawn args
     const spawnArgs = buildSpawnArgs(resolvedParams, {
       taskId,
@@ -174,6 +229,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
       lineagePath: newPath,
       promptFile: tempFiles.promptFile,
       delegateToken,
+      extensionPaths,
     });
 
     // 11. Spawn run
@@ -202,7 +258,8 @@ async function executeParallel(
     {
       concurrency: params.concurrency,
       maxInFlightChildren: config.maxInFlightChildren,
-      signal: undefined,
+      signal: undefined,  // TODO: parent signal (not yet wired in single-agent entry)
+      failFast: false,    // default for now
     },
     async (task, _index, _signal) => {
       // Re-use executeSingle by constructing a single-task params object

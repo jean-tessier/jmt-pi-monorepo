@@ -116,6 +116,7 @@ export interface SpawnContext {
   delegateToken: string;   // '' for ineligible children, token string for authorized ones
   outputFile?: string;     // absolute path to output.json (Task 17 sets this; optional here)
   schemaFile?: string;     // absolute path to schema.json (Task 17 sets this; optional here)
+  extensionPaths?: string[]; // paths to extension files to pass via --extensions
 }
 
 /**
@@ -155,6 +156,10 @@ export function buildSpawnArgs(
 
   if (context.outputFile) {
     argv.push('--output-file', context.outputFile);
+  }
+
+  if (context.extensionPaths && context.extensionPaths.length > 0) {
+    argv.push('--extensions', ...context.extensionPaths);
   }
 
   // ── env ─────────────────────────────────────────────────────────────────────

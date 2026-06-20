@@ -70,9 +70,16 @@ export async function runParallel(
   // Pre-allocate results array so indices are stable regardless of completion order
   const results: ParallelResult[] = new Array(tasks.length);
 
+  // Create an internal AbortController for failFast sibling cancellation
+  const failFastController = options.failFast ? new AbortController() : null;
+
+  // Determine the signal to pass to each runOne call:
+  // prefer failFast signal if available, else parent signal
+  const runSignal = failFastController?.signal ?? options.signal;
+
   await runWithConcurrency(tasks, effectiveConcurrency, async (task, idx) => {
     try {
-      const output = await runOne(task, idx, options.signal);
+      const output = await runOne(task, idx, runSignal);
       results[idx] = { index: idx, output, status: 'ok' };
     } catch (err) {
       results[idx] = {
@@ -80,6 +87,8 @@ export async function runParallel(
         output: `[BLOCKED:ERROR] from agent "${task.agentName ?? 'unknown'}": ${err instanceof Error ? err.message : String(err)}`,
         status: 'error',
       };
+      // Abort siblings on first error (only if failFast is enabled)
+      if (failFastController) failFastController.abort();
     }
 
     // Notify caller of completion (fire-and-forget; no-op if not provided)
