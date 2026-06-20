@@ -6,6 +6,7 @@
 
 import type { PiExtensionContext } from './delegate-tool.js';
 import { cancelRegistry } from './cancel-registry.js';
+import { runDoctor } from './doctor.js';
 
 /**
  * Get current delegation status.
@@ -45,8 +46,10 @@ export function registerDelegateCommand(pi: PiExtensionContext): void {
         return getDelegationStatus();
       case 'cancel':
         return cancelAll();
+      case 'doctor':
+        return runDoctor();
       default:
-        return `Unknown subcommand "${sub}". Available: status, cancel`;
+        return `Unknown subcommand "${sub}". Available: status, cancel, doctor`;
     }
   });
 }
