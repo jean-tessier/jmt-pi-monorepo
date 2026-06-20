@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "peerDependencies": {
-    "pi": "0.79.8"
+    "pi": "^2.0.5"
   },
   "pi": {
     "extensions": [

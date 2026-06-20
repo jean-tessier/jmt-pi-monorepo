@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
+    "@sinclair/typebox": "^0.34.0",
     "yaml": "^2.4.0"
   },
   "peerDependencies": {
-    "pi": "0.79.8"
+    "pi": "^2.0.5"
   },
   "pi": {
     "extensions": [

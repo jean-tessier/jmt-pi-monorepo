@@ -5,6 +5,7 @@
  * the `delegate` tool and a before_agent_start capability note hook.
  */
 
+import { readFile } from 'fs/promises';
 import type { AgentDefinition, DelegateToolParams, ParallelTask } from '../shared/types.js';
 import { loadConfig } from './config.js';
 import { findAgent } from './agents.js';
@@ -14,6 +15,7 @@ import { resolvePiBinary, buildSpawnArgs, spawnRun, generateCapabilityToken } fr
 import { runPreflight } from './guards.js';
 import { runParallel } from './parallel.js';
 import { decodeLineagePath, encodeLineagePath, appendToPath } from '../shared/lineage.js';
+import { compileSchema, isJsonSchemaObject } from '../shared/schema.js';
 
 // ── Pi Extension API types ────────────────────────────────────────────────────
 
@@ -204,11 +206,16 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     activeTools: pi.getActiveTools(),
   });
 
+  // Preflight check 5: validate outputSchema is a JSON object (before temp files)
+  if (resolvedParams.outputSchema && !isJsonSchemaObject(resolvedParams.outputSchema)) {
+    return `[BLOCKED:SCHEMA_INVALID] from agent "${agentDef.name}": outputSchema must be a JSON Schema object`;
+  }
+
   // 7. Build new lineage path (append current agent before spawning child)
   const newPath = encodeLineagePath(appendToPath(decodeLineagePath(lineagePath), agentDef.name));
 
-  // 8. Create temp files
-  const tempFiles = await createTempRunFiles(taskId, task);
+  // 8. Create temp files (pass schema so it writes schema.json if provided)
+  const tempFiles = await createTempRunFiles(taskId, task, resolvedParams.outputSchema ?? undefined);
 
   try {
     // 9. Resolve binary
@@ -230,18 +237,40 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
       promptFile: tempFiles.promptFile,
       delegateToken,
       extensionPaths,
+      schemaFile: resolvedParams.outputSchema ? tempFiles.schemaFile : undefined,
+      outputFile: resolvedParams.outputSchema ? tempFiles.outputFile : undefined,
     });
 
     // 11. Spawn run
-    const { output } = await spawnRun(binaryPath, spawnArgs, tempFiles, {
+    const runResult = await spawnRun(binaryPath, spawnArgs, tempFiles, {
       signal: undefined,
       onUpdate: undefined,
     });
 
+    // 12. If outputSchema was set and exit code was 0, read and validate output.json
+    let structuredOutput: unknown = undefined;
+    if (resolvedParams.outputSchema && runResult.exitCode === 0) {
+      try {
+        const raw = await readFile(tempFiles.outputFile, 'utf-8');
+        const parsed = JSON.parse(raw) as unknown;
+        const validator = compileSchema(resolvedParams.outputSchema);
+        if (!validator.validate(parsed)) {
+          return `[BLOCKED:SCHEMA_INVALID] from agent "${agentDef.name}": output did not match schema`;
+        }
+        structuredOutput = parsed;
+      } catch {
+        // File missing or not JSON — agent didn't call structured_output
+        return `[BLOCKED:SCHEMA_INVALID] from agent "${agentDef.name}": no structured output found (did the agent call structured_output?)`;
+      }
+    }
+
     // 13. Return labeled result
-    return `from agent "${agentDef.name}": ${output}`;
+    if (structuredOutput !== undefined) {
+      return `from agent "${agentDef.name}" (structured): ${JSON.stringify(structuredOutput)}`;
+    }
+    return `from agent "${agentDef.name}": ${runResult.output}`;
   } finally {
-    // 12. Cleanup (runs on both success and error)
+    // Cleanup (runs on both success and error)
     await tempFiles.cleanup();
   }
 }
