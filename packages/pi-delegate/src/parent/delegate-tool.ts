@@ -13,6 +13,7 @@ import { createTempRunFiles } from './tempfiles.js';
 import { resolvePiBinary, buildSpawnArgs, spawnRun } from './spawn.js';
 import { runPreflight } from './guards.js';
 import { runParallel } from './parallel.js';
+import { decodeLineagePath, encodeLineagePath, appendToPath } from '../shared/lineage.js';
 
 // ── Pi Extension API types ────────────────────────────────────────────────────
 
@@ -126,8 +127,11 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     agentDef = found ?? DEFAULT_AGENT;
   }
 
-  // 4. Preflight check
-  const preflight = runPreflight({ params, config, agentDef, depth });
+  // 4. Read lineage path from environment
+  const lineagePath = process.env.PI_DELEGATE_PATH ?? '';
+
+  // 5. Preflight check (includes lineage cap + cycle detection)
+  const preflight = runPreflight({ params, config, agentDef, depth, lineagePath });
   if (preflight.blocked) {
     return formatBlockedResult(preflight.code, preflight.message, agentDef.name);
   }
@@ -136,7 +140,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
   const task = (params as { task: string }).task;
   const taskId = crypto.randomUUID();
 
-  // 5. Resolve params
+  // 6. Resolve params
   const resolvedParams = resolveParams({
     agentDef,
     callParams: {
@@ -149,32 +153,35 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     activeTools: pi.getActiveTools(),
   });
 
-  // 6. Create temp files
+  // 7. Build new lineage path (append current agent before spawning child)
+  const newPath = encodeLineagePath(appendToPath(decodeLineagePath(lineagePath), agentDef.name));
+
+  // 8. Create temp files
   const tempFiles = await createTempRunFiles(taskId, task);
 
   try {
-    // 7. Resolve binary
+    // 9. Resolve binary
     const binaryPath = await resolvePiBinary(config);
 
-    // 8. Build spawn args
+    // 10. Build spawn args
     const spawnArgs = buildSpawnArgs(resolvedParams, {
       taskId,
       depth,
       maxDepth: config.maxDepth,
-      lineagePath: '',
+      lineagePath: newPath,
       promptFile: tempFiles.promptFile,
     });
 
-    // 9. Spawn run
+    // 11. Spawn run
     const { output } = await spawnRun(binaryPath, spawnArgs, tempFiles, {
       signal: undefined,
       onUpdate: undefined,
     });
 
-    // 11. Return labeled result
+    // 13. Return labeled result
     return `from agent "${agentDef.name}": ${output}`;
   } finally {
-    // 10. Cleanup (runs on both success and error)
+    // 12. Cleanup (runs on both success and error)
     await tempFiles.cleanup();
   }
 }
