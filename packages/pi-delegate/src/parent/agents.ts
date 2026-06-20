@@ -189,6 +189,20 @@ function buildAgentDefinition(filePath: string): AgentDefinition | null {
     }
   }
 
+  if ('maxDepth' in frontmatter) {
+    const maxDepth = frontmatter.maxDepth;
+    if (
+      typeof maxDepth !== 'number' ||
+      !Number.isInteger(maxDepth) ||
+      maxDepth <= 0
+    ) {
+      console.warn(
+        `[pi-delegate] skipping agent "${name}": "maxDepth" must be a positive integer if present`
+      );
+      return null;
+    }
+  }
+
   // Build the AgentDefinition
   const def: AgentDefinition = {
     name,
@@ -219,6 +233,14 @@ function buildAgentDefinition(filePath: string): AgentDefinition | null {
     !Array.isArray(frontmatter.outputSchema)
   ) {
     def.outputSchema = frontmatter.outputSchema as object;
+  }
+
+  if (
+    typeof frontmatter.maxDepth === 'number' &&
+    Number.isInteger(frontmatter.maxDepth) &&
+    frontmatter.maxDepth > 0
+  ) {
+    def.maxDepth = frontmatter.maxDepth;
   }
 
   return def;

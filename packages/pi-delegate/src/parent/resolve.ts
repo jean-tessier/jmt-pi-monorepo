@@ -54,6 +54,22 @@ export const SOFT_OUTPUT_DIRECTIVE =
   '\n\nWhen you have completed the task, call the structured_output tool with your result matching the provided schema.';
 
 /**
+ * Resolve the effective maxDepth for a child agent, applying min-clamp.
+ * The child's ceiling is the minimum of parent's configured depth and agent's override.
+ *
+ * @param configMaxDepth - The parent's configured maximum depth
+ * @param agentMaxDepth - The agent definition's optional depth override
+ * @returns The effective maximum depth (never exceeds configMaxDepth)
+ */
+export function resolveMaxDepth(
+  configMaxDepth: number,
+  agentMaxDepth: number | undefined
+): number {
+  if (agentMaxDepth === undefined) return configMaxDepth;
+  return Math.min(configMaxDepth, agentMaxDepth);
+}
+
+/**
  * Resolve the final invocation parameters for a child pi process.
  *
  * Precedence (later wins):

@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import type { AgentDefinition, DelegateToolParams, ParallelTask } from '../shared/types.js';
 import { loadConfig } from './config.js';
 import { findAgent } from './agents.js';
-import { resolveParams } from './resolve.js';
+import { resolveParams, resolveMaxDepth } from './resolve.js';
 import { createTempRunFiles } from './tempfiles.js';
 import { resolvePiBinary, buildSpawnArgs, spawnRun, generateCapabilityToken } from './spawn.js';
 import { runPreflight } from './guards.js';
@@ -183,18 +183,22 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     ? JSON.parse(process.env.PI_DELEGATE_AGENTS) as string[]
     : null;
 
+  // Determine effective agentDef for use after preflight (fall back to DEFAULT_AGENT)
+  const agentDef: AgentDefinition = foundAgentDef ?? DEFAULT_AGENT;
+
+  // Compute effective maxDepth with min-clamp rule
+  const effectiveMaxDepth = resolveMaxDepth(config.maxDepth, agentDef.maxDepth);
+
   // 5. Preflight check (all 8 ordered checks, including delegateAgents allowlist)
   const preflight = runPreflight({
     params,
-    config,
+    config: { ...config, maxDepth: effectiveMaxDepth },
     agentDef: agentDefForPreflight,
     depth,
     lineagePath,
     outputSchema: 'outputSchema' in params ? params.outputSchema : undefined,
     allowedAgentNames: allowedAgents ?? undefined,
   });
-  // Determine effective agentDef for use after preflight (fall back to DEFAULT_AGENT)
-  const agentDef: AgentDefinition = foundAgentDef ?? DEFAULT_AGENT;
   if (preflight.blocked) {
     return formatBlockedResult(preflight.code, preflight.message, agentDef.name);
   }
@@ -237,7 +241,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     const spawnArgs = buildSpawnArgs(resolvedParams, {
       taskId,
       depth,
-      maxDepth: config.maxDepth,
+      maxDepth: effectiveMaxDepth,
       lineagePath: newPath,
       promptFile: tempFiles.promptFile,
       delegateToken,

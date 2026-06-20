@@ -34,6 +34,7 @@ export interface AgentDefinition {
   systemPrompt?: string;  // from frontmatter or body
   outputSchema?: object;  // from frontmatter (JSON Schema object)
   delegateAgents?: string[]; // allowlist of agents this agent may delegate to
+  maxDepth?: number;      // agent-specific max depth override
 }
 
 /**
