@@ -17,6 +17,8 @@ import { formatBlockedResult, formatOkResult, formatStructuredResult } from './r
 import { runParallel } from './parallel.js';
 import { decodeLineagePath, encodeLineagePath, appendToPath } from '../shared/lineage.js';
 import { compileSchema } from '../shared/schema.js';
+import { cancelRegistry } from './cancel-registry.js';
+import { registerDelegateCommand } from './command.js';
 
 // ── Pi Extension API types ────────────────────────────────────────────────────
 
@@ -34,6 +36,10 @@ export interface PiExtensionContext {
     name: string,
     schema: ToolSchema,
     handler: (params: unknown) => Promise<string>
+  ): void;
+  registerCommand?(
+    name: string,
+    handler: (args: string[]) => Promise<string> | string
   ): void;
   getActiveTools(): string[];
   onBeforeAgentStart(
@@ -226,6 +232,10 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
   // 8. Create temp files (pass schema so it writes schema.json if provided)
   const tempFiles = await createTempRunFiles(taskId, task, resolvedParams.outputSchema ?? undefined);
 
+  // Create AbortController for this delegation (Task 23)
+  const abortController = new AbortController();
+  cancelRegistry.register(abortController);
+
   try {
     // 9. Resolve binary
     const binaryPath = await resolvePiBinary(config);
@@ -253,7 +263,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
 
     // 11. Spawn run
     const runResult = await spawnRun(binaryPath, spawnArgs, tempFiles, {
-      signal: undefined,
+      signal: abortController.signal,
       onUpdate: undefined,
       runTimeoutMs: config.runTimeoutMs,
       sandboxCommand: config.sandboxCommand,
@@ -291,6 +301,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
     return formatOkResult(agentDef.name, outputText);
   } finally {
     // Cleanup (runs on both success and error)
+    cancelRegistry.unregister(abortController);
     await tempFiles.cleanup();
   }
 }
@@ -326,6 +337,9 @@ async function executeParallel(
 // ── Extension activation ──────────────────────────────────────────────────────
 
 export function activate(pi: PiExtensionContext): void {
+  // Register the /delegate command
+  registerDelegateCommand(pi);
+
   // Register before_agent_start capability note (§4.1, Appendix A)
   pi.onBeforeAgentStart((ctx) => {
     ctx.appendToSystemPrompt(
