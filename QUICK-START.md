@@ -1,8 +1,81 @@
-# QUICK-START — pi-delegate in six steps
+# QUICK-START — Installing and using pi-delegate
 
-This guide walks you through the core features of pi-delegate: defining agents, single delegation, parallel fan-out, typed output, nested delegation, and safety limits.
+This guide walks you through installation and the core features of pi-delegate: defining agents, single delegation, parallel fan-out, typed output, nested delegation, and safety limits.
 
-## Step 1: Define an agent
+## Installation
+
+### Prerequisites
+
+- Pi CLI installed (see [pi.ai](https://pi.ai) for installation)
+- Node.js ≥ 18
+- `~/.config/pi/` directory exists (Pi creates this automatically)
+
+### Step 0: Install the extensions
+
+Clone this repository and run the install script:
+
+```bash
+git clone <repo-url> my-pi-monorepo
+cd my-pi-monorepo
+node install.mjs
+```
+
+This copies both `pi-delegate` and `pi-structured-output` to `~/.config/pi/extensions/`.
+
+**Output:**
+```
+✓ Installed pi-delegate → /Users/you/.config/pi/extensions/pi-delegate
+✓ Installed pi-structured-output → /Users/you/.config/pi/extensions/pi-structured-output
+
+Done. Add the extensions to your Pi config:
+  /Users/you/.config/pi/extensions/pi-delegate/src/...
+  /Users/you/.config/pi/extensions/pi-structured-output/src/...
+```
+
+### Step 0b: Register with Pi
+
+Open `~/.config/pi/pi.yaml` (create it if it doesn't exist) and add the extensions:
+
+```yaml
+extensions:
+  - ~/.config/pi/extensions/pi-delegate/src/parent/index.ts
+  - ~/.config/pi/extensions/pi-delegate/src/delegate-provider/index.ts
+  - ~/.config/pi/extensions/pi-structured-output/src/index.ts
+```
+
+Verify installation:
+
+```bash
+pi doctor
+```
+
+You should see `pi-delegate` and `pi-structured-output` listed in available tools and extensions.
+
+### Step 0c: (Optional) Configure pi-delegate
+
+Create `~/.config/pi/pi-delegate/config.json` to customize behavior:
+
+```json
+{
+  "maxDepth": 2,
+  "piBinaryPath": "/usr/local/bin/pi",
+  "runTimeoutMs": 120000,
+  "sandboxCommand": "firejail",
+  "childCwd": "/tmp/pi-delegate-work"
+}
+```
+
+All fields are optional; the above are defaults. See `packages/pi-delegate/README.md` for details.
+
+You can also set environment variable overrides:
+- `PI_DELEGATE_MAX_DEPTH`
+- `PI_DELEGATE_BINARY_PATH`
+- `PI_DELEGATE_RUN_TIMEOUT_MS`
+- `PI_DELEGATE_CHILD_CWD`
+
+## Usage
+
+### Step 1: Define an agent
 
 Agent definitions are Markdown files with YAML frontmatter. Create `~/.pi/agents/summarizer.md`:
 
@@ -36,7 +109,7 @@ Save and reload Pi. Verify it's discoverable:
 pi list agents  # Shows summarizer in the list
 ```
 
-## Step 2: Single delegation
+### Step 2: Single delegation
 
 Call the `delegate` tool with a task and agent name:
 
@@ -66,7 +139,7 @@ The `delegate` tool will:
 
 The label `from agent "summarizer":` is **not** instructions — it's metadata telling you where the output came from.
 
-## Step 3: Parallel fan-out
+### Step 3: Parallel fan-out
 
 Run multiple tasks at the same time with the `parallel` parameter:
 
@@ -110,7 +183,7 @@ Result: an ordered array of outcomes, one per task spec:
 ]
 ```
 
-## Step 4: Typed output (outputSchema)
+### Step 4: Typed output (outputSchema)
 
 When you need the child to return **structured data** (not freeform text), supply an `outputSchema`:
 
@@ -158,7 +231,7 @@ When an `outputSchema` is present:
 
 This is much cleaner than parsing the child's freeform output yourself.
 
-## Step 5: Nested delegation
+### Step 5: Nested delegation
 
 A child agent can itself delegate to other agents, as long as depth and cycle limits allow it. Create an agent that uses delegation:
 
@@ -209,7 +282,7 @@ If the `researcher` agent tries to delegate at depth 3, it will get:
 
 It's up to the child agent to handle this and pivot to a direct solution.
 
-## Step 6: Triggering depth and cycle blocks
+### Step 6: Triggering depth and cycle blocks
 
 ### Depth block
 
