@@ -215,6 +215,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
   const taskId = crypto.randomUUID();
 
   // 6. Resolve params
+  const activeTools = pi.getActiveTools();
   const resolvedParams = resolveParams({
     agentDef,
     callParams: {
@@ -224,14 +225,13 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
       promptMode: 'promptMode' in params ? params.promptMode : undefined,
       outputSchema: 'outputSchema' in params ? params.outputSchema : undefined,
     },
-    activeTools: pi.getActiveTools(),
+    activeTools,
   });
 
   // Fix 5: Tool ceiling — check that every requested tool is within the parent's ceiling
   // (SPEC §8.2: a request for a tool outside the ceiling MUST yield TOOL_NOT_PERMITTED)
-  const activeTools = pi.getActiveTools();
   if (activeTools.length > 0) {
-    const requestedTools = 'tools' in params && params.tools ? params.tools : (agentDef.tools ?? []);
+    const requestedTools = ('tools' in params && params.tools != null) ? params.tools : (agentDef.tools ?? []);
     const filteredRequested = requestedTools.filter((t: string) => t !== 'delegate');
     const outOfCeiling = checkToolCeiling(filteredRequested, activeTools);
     if (outOfCeiling) {
@@ -246,7 +246,7 @@ async function executeSingle(params: DelegateToolParams, pi: PiExtensionContext)
   const newPath = encodeLineagePath(appendToPath(decodeLineagePath(lineagePath), agentDef.name));
 
   // 8. Create temp files (pass schema so it writes schema.json if provided)
-  const tempFiles = await createTempRunFiles(taskId, task, resolvedParams.outputSchema ?? undefined);
+  const tempFiles = await createTempRunFiles(taskId, resolvedParams.systemPrompt ?? '', resolvedParams.outputSchema ?? undefined);
 
   // Create AbortController for this delegation (Task 23)
   const abortController = new AbortController();

@@ -146,13 +146,11 @@ export function buildSpawnArgs(
     argv.push('--tools', resolvedParams.tools.join(','));
   }
 
-  if (resolvedParams.systemPrompt) {
-    // Select flag based on promptMode (SPEC §3.2)
-    if (context.promptMode === 'append') {
-      argv.push('--append-system-prompt', context.promptFile);
-    } else {
-      argv.push('--system-prompt', context.promptFile);
-    }
+  // SPEC §3.2: exactly one of these MUST be passed per child
+  if (context.promptMode === 'append') {
+    argv.push('--append-system-prompt', context.promptFile);
+  } else {
+    argv.push('--system-prompt', context.promptFile);
   }
 
   // Always present
