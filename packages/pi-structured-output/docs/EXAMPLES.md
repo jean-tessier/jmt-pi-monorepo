@@ -1,7 +1,7 @@
 # Structured Output — Prompts & Examples
 
 > Prompts you can use after installing `pi-structured-output` (and optionally `pi-delegate`).
-> Install via `node install.mjs` from the repo root, then register in `~/.config/pi/pi.yaml`.
+> Install via `node install.mjs` from the repo root (auto-updates `~/.config/pi/settings.json`) or manually register in `~/.config/pi/pi.yaml`.
 
 ---
 
@@ -17,9 +17,9 @@ You parse or strip the prefix — fragile and error-prone.
 
 ### With structured output
 
-> `{ "title": "Foo", "topics": [...], "wordCount": 123 }`
+> `"from agent 'extractor' (structured): {\"title\":\"Foo\",\"topics\":[...],\"wordCount\":123}"`
 
-You get clean, validated JSON in `structuredOutput`. The parent rejects non-conforming results.
+You get validated JSON, labeled as a structured result so the parent can parse it cleanly. The parent rejects non-conforming results.
 
 ---
 
@@ -33,7 +33,7 @@ You get clean, validated JSON in `structuredOutput`. The parent rejects non-conf
      - ~/.config/pi/extensions/pi-delegate/src/delegate-provider/index.ts
      - ~/.config/pi/extensions/pi-structured-output/src/index.ts
    ```
-3. **Define your agents** — create `.md` files with YAML frontmatter in `~/.pi/agents/`.
+3. **Define your agents** — create `.md` files with YAML frontmatter in `~/.config/pi/agents/`.
 
 ---
 
@@ -61,17 +61,8 @@ outputSchema:
 ```
 
 **Result:**
-```json
-{
-  "status": "ok",
-  "agent": "extractor",
-  "structuredOutput": {
-    "title": "Building AI Systems at Scale",
-    "author": "Jane Doe",
-    "wordCount": 1240,
-    "topics": ["AI", "architecture", "distributed-systems"]
-  }
-}
+```
+from agent "extractor" (structured): {"title":"Building AI Systems at Scale","author":"Jane Doe","wordCount":1240,"topics":["AI","architecture","distributed-systems"]}
 ```
 
 ---
@@ -115,23 +106,8 @@ outputSchema:
 ```
 
 **Result:**
-```json
-{
-  "status": "ok",
-  "agent": "financial-analyst",
-  "structuredOutput": {
-    "company": "Acme Corp",
-    "quarter": "Q2 2025",
-    "revenue": 4520000000,
-    "earningsPerShare": 2.34,
-    "keyMetrics": [
-      { "name": "Gross Margin", "value": "62%", "trend": "up" },
-      { "name": "CAC", "value": "$450", "trend": "flat" }
-    ],
-    "risks": ["Supply chain volatility", "FX headwinds"],
-    "confidence": 0.89
-  }
-}
+```
+from agent "financial-analyst" (structured): {"company":"Acme Corp","quarter":"Q2 2025","revenue":4520000000,"earningsPerShare":2.34,"keyMetrics":[{"name":"Gross Margin","value":"62%","trend":"up"},{"name":"CAC","value":"$450","trend":"flat"}],"risks":["Supply chain volatility","FX headwinds"],"confidence":0.89}
 ```
 
 ---
@@ -177,24 +153,12 @@ failFast: false
 ```
 
 **Result:**
-```json
-[
-  {
-    "status": "ok",
-    "agent": "extractor",
-    "structuredOutput": { "title": "Doc One", "wordCount": 800 }
-  },
-  {
-    "status": "ok",
-    "agent": "extractor",
-    "structuredOutput": { "title": "Doc Two", "wordCount": 1200 }
-  },
-  {
-    "status": "error",
-    "agent": "extractor",
-    "error": { "code": "NO_MODEL_OR_AUTH", "message": "..." }
-  }
-]
+```
+from agent "extractor" (structured): {"title":"Doc One","wordCount":800}
+
+from agent "extractor" (structured): {"title":"Doc Two","wordCount":1200}
+
+[BLOCKED:SCHEMA_INVALID] from agent "extractor": Agent timed out
 ```
 
 ---

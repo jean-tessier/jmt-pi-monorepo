@@ -21,7 +21,10 @@ cd my-pi-monorepo
 node install.mjs
 ```
 
-The script copies each extension into `~/.config/pi/extensions/` and prints the `pi.yaml` snippet you need to activate them.
+For each package under `packages/`, the script:
+1. Copies the package into `~/.config/pi/extensions/<package-name>`
+2. Runs `npm install --install-strategy=nested --production` in the destination to fetch runtime dependencies
+3. Registers the extension path in `~/.config/pi/settings.json` under the `extensions` key
 
 See [QUICK-START.md](QUICK-START.md) for a guided walkthrough of the core features.
 

@@ -1,6 +1,7 @@
 # pi-delegate — Design & Internals (v1)
 
-> Status: **Seed.** Companion to `SPEC.md` (normative contract) and
+> Status: **Hardened** — the subprocess backend design is fully implemented. This document records the design decisions that led to the code.
+> Companion to `SPEC.md` (normative contract) and
 > `IMPLEMENTATION-PLAN.md` (staged build). This document explains *how* the
 > subprocess backend (`SPEC.md` §3) is built and records open design questions.
 > Where this document and `SPEC.md` disagree, `SPEC.md` is authoritative.
@@ -98,13 +99,14 @@ need: spawn children with `--mode json`, forward parsed event boundaries to
 This resolves **OQ-3** and tightens §3.8; `SPEC.md` now references `--mode json`
 as the concrete capture mechanism (§3.2, §3.7, §3.8, §10).
 
-**Decision (v1): C — two separate providers.** Structured output is delivered by a
-standalone **structured-output provider** (registers only `structured_output`,
+**Decision (v1): C — two separate providers (Resolved/Implemented ✅).** Structured output is delivered by a
+standalone **structured-output provider** (`packages/pi-structured-output/src/index.ts`) (registers only `structured_output`,
 armed by `PI_OUTPUT_SCHEMA`/`PI_OUTPUT_FILE`), loaded à la carte alongside the
-**delegate provider** (registers only `delegate`, armed by `PI_DELEGATE_TOKEN`).
+**delegate provider** (`packages/pi-delegate/src/delegate-provider/index.ts`) (registers only `delegate`, armed by `PI_DELEGATE_TOKEN`).
 A leaf child that only returns a structured value loads **no** delegation code;
 an authorized free-text child loads no structured-output code; both load only when
-a run needs both. Recorded in `SPEC.md` §3.2–§3.5, §6, §8.2–§8.4, §12. Chosen over
+a run needs both. Recorded in `SPEC.md` §3.2–§3.5, §6, §8.2–§8.4, §12 and fully
+implemented across the two packages. Chosen over
 **A** (single self-gating provider) for the smaller per-child surface and clean
 separation of concerns, accepting two shippable artifacts, distributed as **two
 packages**: `pi-delegate` (parent extension + child-side delegate provider) and
@@ -130,32 +132,32 @@ Logged here for visibility; fill in the OQ-1 structure when each is taken up.
   `agent_end`/`message_end` for the final result (§3.8). Remaining choice: whether
   to forward streamed assistant text (`message_update`) or stop at coarse
   boundaries for v1.
-- **OQ-4 — Child execution sandboxing.** v1 ships `bash`/`write`-capable agents
+- **OQ-4 — Child execution sandboxing (Resolved/Implemented ✅).** v1 ships `bash`/`write`-capable agents
   (`IMPLEMENTATION-PLAN.md` Task 28, G26), so the child trust model is committed
   work, not just a question. A child `pi` subprocess inherits the parent's OS
   identity and permissions by default; the subprocess boundary gives process
-  isolation, not a security sandbox. v1 lean: (a) confirm the inherited
-  filesystem/exec/network scope (the **Q5** spike), (b) default write/bash children
-  to per-child `cwd` confinement (`SPEC.md` §10), (c) document the trust boundary
-  plainly, and (d) expose an optional `sandboxCommand` config that wraps the spawn
-  (`bwrap`/`firejail`/container), deferring built-in seccomp/landlock to a later
-  tier.
+  isolation, not a security sandbox. v1 implements (d) below: `sandboxCommand` is
+  an optional config field consumed by `wrapWithSandbox()` in
+  `packages/pi-delegate/src/parent/spawn.ts` that wraps the child process with
+  `bwrap`/`firejail`/a container. Items (a)–(c) follow from the implementation:
+  per-child `cwd` confinement (`SPEC.md` §10), inherited OS identity documented in
+  the trust model. Built-in seccomp/landlock remains a future tier.
 
 ---
 
-## Sections to be written
+## Code references
 
-Skeleton per research doc §5 (`SUBAGENT-EXTENSION-RESEARCH.md`). Each will document
-the subprocess backend now that embedded is deferred:
+Most design concepts are documented inline in the source code and `SPEC.md`.
+This table maps each conceptual area to the files that implement it.
 
-1. **Execution internals** — binary resolution; the arg/env builder; prompt &
-   schema temp-file lifecycle; process spawn/wait; streaming via `onUpdate`;
-   cancellation via `signal` → `SIGTERM`/`SIGKILL`.
-2. **Depth & cycle propagation** — env threading (`PI_DELEGATE_DEPTH`/`_MAX_DEPTH`/
-   `_PATH`); `PI_DELEGATE_PATH` sanitization and the `min`-clamp.
-3. **Capability gating** — the two single-purpose child providers (delegate,
-   structured-output), the per-child token, and the load-à-la-carte / register-on-
-   token mechanism (`SPEC.md` §3.4/§6).
-4. **Module layout & sequence diagrams** — single, parallel, and nested delegation.
-5. **Failure handling** — error-taxonomy mapping, timeouts, cleanup, telemetry
-   hooks.
+| Design concept | Code location |
+|---|---|
+| Execution internals (binary resolution, arg/env builder, temp-file lifecycle, spawn/wait, streaming, cancellation) | `packages/pi-delegate/src/parent/spawn.ts` |
+| Depth & cycle propagation (env threading, cycle detection, max-depth guard) | `packages/pi-delegate/src/shared/lineage.ts`, `packages/pi-delegate/src/parent/guards.ts` |
+| Capability gating (two single-purpose providers, token auth, à-la-carte loading) | `packages/pi-delegate/src/delegate-provider/index.ts`, `packages/pi-delegate/src/parent/delegate-tool.ts` |
+| Module layout & entry points | Actual files under `packages/pi-delegate/src/` |
+| Failure handling (error taxonomy, timeouts, cleanup, telemetry) | `packages/pi-delegate/src/parent/result.ts`, `packages/pi-delegate/src/parent/guards.ts` |
+
+> **Note:** The "Sections to be written" list from earlier versions has been
+> retired. Everything listed there is now implemented code; the design rationale
+> is captured in the sections above and in the source files referenced here.

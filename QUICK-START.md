@@ -27,14 +27,12 @@ This copies both `pi-delegate` and `pi-structured-output` to `~/.config/pi/exten
 ✓ Installed pi-delegate → /Users/you/.config/pi/extensions/pi-delegate
 ✓ Installed pi-structured-output → /Users/you/.config/pi/extensions/pi-structured-output
 
-Done. Add the extensions to your Pi config:
-  /Users/you/.config/pi/extensions/pi-delegate/src/...
-  /Users/you/.config/pi/extensions/pi-structured-output/src/...
+Done. Extensions automatically registered in ~/.config/pi/settings.json.
 ```
 
 ### Step 0b: Register with Pi
 
-Open `~/.config/pi/pi.yaml` (create it if it doesn't exist) and add the extensions:
+The install script (`install.mjs`) automatically updates `~/.config/pi/settings.json` for you, so manual registration is typically **optional**. If you prefer to configure manually, or need to adjust the registration, open `~/.config/pi/pi.yaml` (create it if it doesn't exist) and add the extensions:
 
 ```yaml
 extensions:
@@ -60,12 +58,15 @@ Create `~/.config/pi/pi-delegate/config.json` to customize behavior:
   "maxDepth": 2,
   "piBinaryPath": "/usr/local/bin/pi",
   "runTimeoutMs": 120000,
+  "maxInFlightChildren": 10,
   "sandboxCommand": "firejail",
   "childCwd": "/tmp/pi-delegate-work"
 }
 ```
 
 All fields are optional; the above are defaults. See `packages/pi-delegate/README.md` for details.
+
+> **Note:** `piBinaryPath` is just an example. When left unset, the system PATH is searched automatically to find the `pi` binary.
 
 You can also set environment variable overrides:
 - `PI_DELEGATE_MAX_DEPTH`
@@ -77,7 +78,7 @@ You can also set environment variable overrides:
 
 ### Step 1: Define an agent
 
-Agent definitions are Markdown files with YAML frontmatter. Create `~/.pi/agents/summarizer.md`:
+Agent definitions are Markdown files with YAML frontmatter. Create `~/.config/pi/agents/summarizer.md`:
 
 ```markdown
 ---
@@ -100,13 +101,13 @@ The frontmatter keys:
 - **`name`** — unique identifier; used in `delegate({ agent: "summarizer" })`
 - **`description`** — one-liner for discovery; shown when listing available agents
 - **`model`** — override the model (e.g., `anthropic/claude-opus`); if omitted, inherits from parent
-- **`tools`** — array of builtin tools the child may use (e.g., `[read, bash]`); empty = reasoning-only
+- **`tools`** — array of builtin tools the child may use (any subset of the parent's active tools); empty = reasoning-only
 - **`systemPrompt`** (body) — the Markdown text below the frontmatter; becomes the child's system prompt
 
 Save and reload Pi. Verify it's discoverable:
 
 ```bash
-pi list agents  # Shows summarizer in the list
+/delegate doctor  # Shows summarizer in the list
 ```
 
 ### Step 2: Single delegation
@@ -170,17 +171,17 @@ Run multiple tasks at the same time with the `parallel` parameter:
 Key parameters:
 
 - **`parallel`** — array of 2+ task specs; each spec has the same fields as a single run
-- **`concurrency`** — max children running at the same time (default `4`)
+- **`concurrency`** — max children running at the same time (default `5`)
 - **`failFast`** — if `true`, stop and abort remaining tasks on the first failure
 
-Result: an ordered array of outcomes, one per task spec:
+Result: labeled strings, one per task spec, separated by blank lines:
 
 ```
-[
-  { "status": "ok", "agent": "summarizer", "output": "..." },
-  { "status": "ok", "agent": "analyst", "output": "..." },
-  { "status": "error", "agent": "risk-spotter", "error": { "code": "NO_MODEL_OR_AUTH", "message": "..." } }
-]
+from agent "summarizer": <output>
+
+from agent "analyst": <output>
+
+from agent "risk-spotter": <output>
 ```
 
 ### Step 4: Typed output (outputSchema)
@@ -215,18 +216,8 @@ When an `outputSchema` is present:
 3. The data is validated against the schema (using TypeBox `Compile`).
 4. On success, the result comes back as `structuredOutput` (the validated object), not text:
 
-```json
-{
-  "status": "ok",
-  "agent": "extractor",
-  "structuredOutput": {
-    "title": "Building AI Systems",
-    "authors": ["Alice", "Bob"],
-    "publishDate": "2024-01-15",
-    "topics": ["AI", "design", "safety"],
-    "confidence": 0.92
-  }
-}
+```
+from agent "extractor" (structured): {"title":"Building AI Systems","authors":["Alice","Bob"],"publishDate":"2024-01-15","topics":["AI","design","safety"],"confidence":0.92}
 ```
 
 This is much cleaner than parsing the child's freeform output yourself.
@@ -270,14 +261,8 @@ Now:
 
 If the `researcher` agent tries to delegate at depth 3, it will get:
 
-```json
-{
-  "status": "blocked",
-  "error": {
-    "code": "DEPTH_BLOCKED",
-    "message": "max depth 3 reached; cannot delegate further"
-  }
-}
+```
+[BLOCKED:DEPTH_BLOCKED] from agent "researcher": Depth 3 exceeds maxDepth (3); cannot delegate
 ```
 
 It's up to the child agent to handle this and pivot to a direct solution.
@@ -297,14 +282,7 @@ Set `maxDepth: 1` in the config:
 Now your root agent can call `delegate`, but any child agent that tries to call `delegate` will be blocked:
 
 ```
-Call returns:
-{
-  "status": "blocked",
-  "error": {
-    "code": "DEPTH_BLOCKED",
-    "message": "Depth 2 exceeds maxDepth (1); cannot delegate"
-  }
-}
+[BLOCKED:DEPTH_BLOCKED] from agent "researcher": Depth 3 exceeds maxDepth (3); cannot delegate
 ```
 
 This is how you create **leaf agents** — agents that can do work but not spawn further children.
@@ -339,14 +317,8 @@ I can delegate to myself.
 
 The root agent calls `loop-test` at depth 1. Inside `loop-test`, the agent tries to call `delegate` with agent `loop-test` again. The lineage path is `[root] → [loop-test]`, and `loop-test` is already in it, so:
 
-```json
-{
-  "status": "blocked",
-  "error": {
-    "code": "CYCLE_DETECTED",
-    "message": "Agent 'loop-test' is already in the delegation path: [root → loop-test]"
-  }
-}
+```
+[BLOCKED:CYCLE_DETECTED] from agent "loop-test": Cycle detected: agent "loop-test" already in path [root→loop-test]
 ```
 
 The cycle block fires *before* the spawn, preventing runaway recursion.
@@ -356,7 +328,7 @@ The cycle block fires *before* the spawn, preventing runaway recursion.
 ## What's next?
 
 - **Configuration**: Tune `maxDepth`, `runTimeoutMs`, and `sandboxCommand` in `~/.config/pi/pi-delegate/config.json`.
-- **Agent discovery**: Check `~/.pi/agents/` and `./.pi/agents/` (project scope) for agent definitions.
+- **Agent discovery**: Check `~/.config/pi/agents/` and `./.pi/agents/` (project scope) for agent definitions.
 - **Error handling**: Inspect the `error` object (code + message) in blocked or failed results.
 - **Monitoring**: Run `pi doctor` to verify installation and see available agents.
 
