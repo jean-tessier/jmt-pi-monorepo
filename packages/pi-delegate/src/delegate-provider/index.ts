@@ -5,10 +5,10 @@
  * valid PI_DELEGATE_TOKEN. This implements capability gating by token presence.
  */
 
-import type { PiExtensionContext } from '../parent/delegate-tool.js';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { activate as parentActivate } from '../parent/delegate-tool.js';
 
-export function activate(pi: PiExtensionContext): void {
+export default function (pi: ExtensionAPI): void {
   const token = process.env.PI_DELEGATE_TOKEN ?? '';
   if (!token) {
     // Not authorized — don't register the delegate tool
@@ -17,5 +17,3 @@ export function activate(pi: PiExtensionContext): void {
   // Authorized — register full delegate tool (re-use parent's activate)
   parentActivate(pi);
 }
-
-export default { activate };

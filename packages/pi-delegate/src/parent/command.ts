@@ -4,7 +4,7 @@
  * Provides `status` and `cancel` subcommands for delegation introspection and control.
  */
 
-import type { PiExtensionContext } from './delegate-tool.js';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { cancelRegistry } from './cancel-registry.js';
 import { runDoctor } from './doctor.js';
 
@@ -38,18 +38,28 @@ function cancelAll(): string {
 /**
  * Register the /delegate command with the Pi extension.
  */
-export function registerDelegateCommand(pi: PiExtensionContext): void {
-  pi.registerCommand?.('delegate', async (args: string[]) => {
-    const sub = args[0] ?? 'status';
-    switch (sub) {
-      case 'status':
-        return getDelegationStatus();
-      case 'cancel':
-        return cancelAll();
-      case 'doctor':
-        return runDoctor();
-      default:
-        return `Unknown subcommand "${sub}". Available: status, cancel, doctor`;
-    }
+export function registerDelegateCommand(pi: ExtensionAPI): void {
+  pi.registerCommand('delegate', {
+    description: 'Manage delegations: status, cancel, doctor',
+    handler: async (args: string, ctx) => {
+      const parts = args.split(/\s+/);
+      const sub = parts[0] ?? 'status';
+      switch (sub) {
+        case 'status':
+          ctx.ui.notify(getDelegationStatus(), 'info');
+          break;
+        case 'cancel':
+          ctx.ui.notify(cancelAll(), 'info');
+          break;
+        case 'doctor': {
+          const report = await runDoctor();
+          ctx.ui.notify(report, 'info');
+          break;
+        }
+        default:
+          ctx.ui.notify(`Unknown subcommand "${sub}". Available: status, cancel, doctor`, 'warning');
+          break;
+      }
+    },
   });
 }

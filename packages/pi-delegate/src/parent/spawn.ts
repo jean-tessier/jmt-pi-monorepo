@@ -117,7 +117,7 @@ export interface SpawnContext {
   delegateToken: string;   // '' for ineligible children, token string for authorized ones
   outputFile?: string;     // absolute path to output.json (Task 17 sets this; optional here)
   schemaFile?: string;     // absolute path to schema.json (Task 17 sets this; optional here)
-  extensionPaths?: string[]; // paths to extension files to pass via --extensions
+  extensionPaths?: string[]; // paths to extension files to pass via -e
   delegateAgents?: string[]; // agent names this agent is allowed to delegate to
 }
 
@@ -162,10 +162,12 @@ export function buildSpawnArgs(
     argv.push('--output-file', context.outputFile);
   }
 
-  // SPEC §3.4: --no-extensions baseline before any --extensions (child loads ONLY specified providers)
+  // SPEC §3.4: --no-extensions baseline before any -e (child loads ONLY specified providers)
   argv.push('--no-extensions');
   if (context.extensionPaths && context.extensionPaths.length > 0) {
-    argv.push('--extensions', ...context.extensionPaths);
+    for (const ep of context.extensionPaths) {
+      argv.push('-e', ep);
+    }
   }
 
   // SPEC §3.2: task string MUST be passed as positional argument, never interpolated into a flag
@@ -257,9 +259,9 @@ export function wrapWithSandbox(
 /** Events emitted by pi --mode json on stdout */
 type AgentEvent =
   | { type: 'agent_start'; agent?: string }
-  | { type: 'agent_end'; agent?: string; result?: string }
+  | { type: 'agent_end'; agent?: string; messages?: Array<{ role: string; content?: Array<{ type: string; text?: string }> }>; result?: string }
   | { type: 'message_start' }
-  | { type: 'message_end'; content?: string }
+  | { type: 'message_end'; message?: { role: string; content?: Array<{ type: string; text?: string }> }; content?: never }
   | { type: 'tool_start'; tool?: string; input?: unknown }
   | { type: 'tool_end'; tool?: string; output?: unknown }
   | { type: 'text_delta'; text?: string }
@@ -353,10 +355,20 @@ export async function spawnRun(
           break;
 
         case 'agent_end': {
-          const agentEndEvent = event as { type: 'agent_end'; agent?: string; result?: string };
+          const agentEndEvent = event as { type: 'agent_end'; agent?: string; messages?: Array<{ role: string; content?: Array<{ type: string; text?: string }> }>; result?: string };
           // Capture result as fallback if no message_end was seen
           if (agentEndEvent.result != null) {
             agentEndResult = agentEndEvent.result;
+          }
+          // Also try extracting from messages array (actual pi --mode json format)
+          if (!agentEndResult && agentEndEvent.messages) {
+            const assistantMsg = agentEndEvent.messages.find(m => m.role === 'assistant');
+            if (assistantMsg?.content) {
+              const texts = assistantMsg.content
+                .filter((c): c is { type: string; text: string } => c.type === 'text' && c.text != null)
+                .map(c => c.text);
+              if (texts.length > 0) agentEndResult = texts.join('\n');
+            }
           }
           options.onUpdate?.({
             type: 'agent_end',
@@ -366,10 +378,13 @@ export async function spawnRun(
         }
 
         case 'message_end': {
-          const msgEndEvent = event as { type: 'message_end'; content?: string };
-          // message_end.content is the preferred capture source
-          if (msgEndEvent.content != null) {
-            output = msgEndEvent.content;
+          const msgEndEvent = event as { type: 'message_end'; message?: { role: string; content?: Array<{ type: string; text?: string }> } };
+          // Extract assistant text from message.content array (actual pi --mode json format)
+          if (msgEndEvent.message?.content) {
+            const assistantParts = msgEndEvent.message.content.filter(p => p.type === 'text' && p.text != null);
+            if (assistantParts.length > 0) {
+              output = assistantParts.map(p => p.text).join('\n');
+            }
           }
           break;
         }

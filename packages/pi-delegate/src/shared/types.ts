@@ -92,6 +92,7 @@ export type DelegateToolParams =
   | {
       parallel: ParallelTask[]; // array of parallel tasks
       concurrency?: number;
+      failFast?: boolean;        // abort siblings on first error
       task?: never;
       agent?: never;
       outputSchema?: never;

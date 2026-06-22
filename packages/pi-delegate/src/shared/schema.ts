@@ -1,11 +1,11 @@
 /**
  * TypeBox schema compilation wrapper for pi-delegate (Task 17)
  *
- * Provides schema validation using @sinclair/typebox TypeCompiler.
+ * Provides schema validation using typebox Compile.
  */
 
-import type { TSchema } from '@sinclair/typebox';
-import { TypeCompiler } from '@sinclair/typebox/compiler';
+import type { TSchema } from 'typebox';
+import { Compile } from 'typebox/compile';
 
 /**
  * Compile a JSON Schema object into a validator using TypeBox TypeCompiler.
@@ -16,7 +16,7 @@ import { TypeCompiler } from '@sinclair/typebox/compiler';
  */
 export function compileSchema(schema: object): { validate: (value: unknown) => boolean } {
   try {
-    const compiled = TypeCompiler.Compile(schema as TSchema);
+    const compiled = Compile(schema as TSchema);
     return { validate: (value: unknown) => compiled.Check(value) };
   } catch {
     throw new Error('Invalid JSON Schema: cannot compile');
