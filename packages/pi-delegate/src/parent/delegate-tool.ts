@@ -329,7 +329,7 @@ async function executeParallel(
       signal: parentSignal,
       failFast: params.failFast ?? false,
     },
-    async (task, _index, _signal) => {
+    async (task, _index, signal) => {
       // Re-use executeSingle by constructing a single-task params object
       // Forward all per-run fields per SPEC §4.2
       const tools = Array.isArray(task.tools) ? task.tools : (task.tools ? [task.tools] : undefined);
@@ -343,7 +343,8 @@ async function executeParallel(
           promptMode: task.promptMode,
           outputSchema: task.outputSchema,
         },
-        pi
+        pi,
+        signal
       );
     }
   );

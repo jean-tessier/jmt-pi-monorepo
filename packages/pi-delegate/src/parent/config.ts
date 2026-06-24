@@ -71,6 +71,7 @@ export function loadConfig(): DelegateConfig {
   // Start with defaults
   const config: DelegateConfig = {
     maxDepth: 2,
+    runTimeoutMs: 600_000,
   };
 
   // Load config file if it exists

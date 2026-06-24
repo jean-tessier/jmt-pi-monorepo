@@ -18,6 +18,19 @@ import { runParallel } from '../../src/parent/parallel.js';
 import type { ParallelResult } from '../../src/parent/parallel.js';
 import { activate } from '../../src/parent/delegate-tool.js';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { loadConfig } from '../../src/parent/config.js';
+import { spawnRun } from '../../src/parent/spawn.js';
+
+vi.mock('../../src/parent/spawn.js', () => ({
+  resolvePiBinary: vi.fn().mockResolvedValue('/mock/pi'),
+  spawnRun: vi.fn().mockResolvedValue({
+    output: 'mock delegated output',
+    exitCode: 0,
+    timedOut: false,
+  }),
+  generateCapabilityToken: vi.fn().mockReturnValue('mock-capability-token'),
+  buildSpawnArgs: vi.fn().mockReturnValue([]),
+}));
 
 // ── Helpers: recreate the flat schema as defined in delegate-tool.ts ──────────
 
@@ -372,5 +385,66 @@ describe('ParallelResult shape', () => {
     expect(typeof results[0].index).toBe('number');
     expect(typeof results[0].output).toBe('string');
     expect(['ok', 'error']).toContain(results[0].status);
+  });
+});
+
+// ── Tests: loadConfig defaults ────────────────────────────────────────────────
+
+describe('loadConfig defaults', () => {
+  it('default config has runTimeoutMs of 600_000', () => {
+    const savedPath = process.env.PI_DELEGATE_CONFIG_PATH;
+    const savedTimeout = process.env.PI_DELEGATE_RUN_TIMEOUT_MS;
+    // Point to a non-existent config file so only in-code defaults are used
+    process.env.PI_DELEGATE_CONFIG_PATH = '/nonexistent-path-for-testing-defaults';
+    delete process.env.PI_DELEGATE_RUN_TIMEOUT_MS;
+    try {
+      const config = loadConfig();
+      expect(config.runTimeoutMs).toBe(600_000);
+    } finally {
+      if (savedPath !== undefined) {
+        process.env.PI_DELEGATE_CONFIG_PATH = savedPath;
+      } else {
+        delete process.env.PI_DELEGATE_CONFIG_PATH;
+      }
+      if (savedTimeout !== undefined) {
+        process.env.PI_DELEGATE_RUN_TIMEOUT_MS = savedTimeout;
+      }
+    }
+  });
+});
+
+// ── Tests: signal forwarding in executeParallel ───────────────────────────────
+
+describe('executeParallel signal forwarding', () => {
+  let mock: ReturnType<typeof createMockAPI>;
+
+  beforeEach(() => {
+    mock = createMockAPI();
+    delete process.env.PI_DELEGATE_TOKEN;
+    vi.mocked(spawnRun).mockClear();
+  });
+
+  it('passes the runOne signal to executeSingle as parentSignal', async () => {
+    activate(mock.api);
+    const tool = mock.tools[0];
+
+    // Pre-aborted signal makes the linkage synchronous and deterministic:
+    // executeSingle immediately aborts its AbortController when parentSignal.aborted === true.
+    const abortController = new AbortController();
+    abortController.abort();
+
+    await tool.execute(
+      'call-signal-test',
+      { parallel: [{ task: 'signal test task' }] },
+      abortController.signal,
+      undefined,
+      {} as any,
+    );
+
+    // spawnRun must have been called with an already-aborted signal,
+    // proving the parent abort propagated through executeParallel → executeSingle.
+    expect(vi.mocked(spawnRun)).toHaveBeenCalledOnce();
+    const callOptions = vi.mocked(spawnRun).mock.calls[0][3] as { signal?: AbortSignal };
+    expect(callOptions.signal?.aborted).toBe(true);
   });
 });
