@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { runPreflight } from '../../src/parent/guards.js';
 import type { PreflightContext } from '../../src/parent/guards.js';
-import type { DelegateConfig } from '../../src/shared/types.js';
-import type { AgentDefinition } from '../../src/shared/types.js';
+import type { DelegateConfig, DelegateToolParams, AgentDefinition } from '../../src/shared/types.js';
 
 const DEFAULT_CONFIG: DelegateConfig = {
   maxDepth: 2,
@@ -34,6 +33,14 @@ describe('preflight guards', () => {
 
   it('INVALID_PARAMS: empty task string', () => {
     const result = runPreflight({ ...BASE_CTX, params: { task: '' } });
+    expect(result.blocked).toBe(true);
+    if (result.blocked) expect(result.code).toBe('INVALID_PARAMS');
+  });
+
+  it('INVALID_PARAMS: task key entirely absent (empty object)', () => {
+    // Exercises the first clause of Check 1: !('task' in ctx.params)
+    // Different code path from { task: '' } which hits the third clause
+    const result = runPreflight({ ...BASE_CTX, params: {} as DelegateToolParams });
     expect(result.blocked).toBe(true);
     if (result.blocked) expect(result.code).toBe('INVALID_PARAMS');
   });

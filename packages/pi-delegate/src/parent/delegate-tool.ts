@@ -24,19 +24,7 @@ import { registerDelegateCommand } from './command.js';
 
 // ── Tool parameters (TypeBox) ─────────────────────────────────────────────────
 
-// ── Single-task schema branch ────────────────────────────────────────────────
-
-const SINGLE_TASK_PARAMS = Type.Object({
-  task: Type.String({ description: 'Task for the sub-agent. Required in single-task mode. Mutually exclusive with `parallel`.' }),
-  agent: Type.Optional(Type.String({ description: 'Named agent definition to use (from .pi/agents/ or ~/.config/pi/agents/). Omit for a general-purpose default agent.' })),
-  model: Type.Optional(Type.String({ description: 'Override the model for this sub-agent, e.g. "google/gemini-2.5-flash-001". Inherits from parent by default.' })),
-  tools: Type.Optional(Type.Array(Type.String(), { description: 'Tool allowlist for the sub-agent, e.g. ["read", "bash"]. Must be a subset of the parent\'s active tools. Empty by default (no tools granted).' })),
-  prompt: Type.Optional(Type.String({ description: "Custom system prompt. Use with `promptMode` to control whether it replaces or appends to the agent definition's prompt." })),
-  promptMode: Type.Optional(Type.String({ description: '"replace" (default) — `prompt` entirely replaces the agent definition\'s system prompt. "append" — `prompt` is appended to the agent definition\'s system prompt.' })),
-  outputSchema: Type.Optional(Type.Object({}, { description: 'JSON Schema to enforce structured output. Returns result prefixed with "(structured)" + JSON instead of plain text. The sub-agent will be prompted to use the `structured_output` tool.' })),
-}, { additionalProperties: false });
-
-// ── Parallel-task schema branch ──────────────────────────────────────────────
+// ── Parallel-task item schema ────────────────────────────────────────────────
 
 const PARALLEL_TASK_ITEM = Type.Object({
   task: Type.String({ description: 'Task description/prompt for this parallel sub-task. Required inside each parallel item.' }),
@@ -51,15 +39,22 @@ const PARALLEL_TASK_ITEM = Type.Object({
   outputSchema: Type.Optional(Type.Object({}, { description: 'JSON Schema to enforce structured output from this sub-task.' })),
 });
 
-const PARALLEL_TASK_PARAMS = Type.Object({
-  parallel: Type.Array(PARALLEL_TASK_ITEM, { description: 'Array of independent sub-tasks to run concurrently. Each item is an object with at least `task` (string). Results returned in input order, each prefixed with the agent name. Mutually exclusive with top-level `task`.' }),
-  concurrency: Type.Optional(Type.Number({ description: 'Max parallel sub-tasks running at once. Default: 5. Lower values conserve system resources; higher values increase throughput.' })),
-  failFast: Type.Optional(Type.Boolean({ description: 'If true, abort all remaining parallel sub-tasks on the first error. Default: false (partial tolerance — failed tasks are reported, others continue).' })),
+// ── Flat parameters object (runtime-discriminated) ────────────────────────────
+
+const DELEGATE_TOOL_PARAMS = Type.Object({
+  // Single-task mode
+  task:         Type.Optional(Type.String({ description: 'Task for the sub-agent. Required in single-task mode. Mutually exclusive with `parallel`.' })),
+  agent:        Type.Optional(Type.String({ description: 'Named agent definition to use (from .pi/agents/ or ~/.config/pi/agents/). Omit for a general-purpose default agent.' })),
+  model:        Type.Optional(Type.String({ description: 'Override the model for this sub-agent, e.g. "google/gemini-2.5-flash-001". Inherits from parent by default.' })),
+  tools:        Type.Optional(Type.Array(Type.String(), { description: 'Tool allowlist for the sub-agent, e.g. ["read", "bash"]. Must be a subset of the parent\'s active tools. Empty by default (no tools granted).' })),
+  prompt:       Type.Optional(Type.String({ description: "Custom system prompt. Use with `promptMode` to control whether it replaces or appends to the agent definition's prompt." })),
+  promptMode:   Type.Optional(Type.String({ description: '"replace" (default) — `prompt` entirely replaces the agent definition\'s system prompt. "append" — `prompt` is appended to the agent definition\'s system prompt.' })),
+  outputSchema: Type.Optional(Type.Object({}, { description: 'JSON Schema to enforce structured output. Returns result prefixed with "(structured)" + JSON instead of plain text. The sub-agent will be prompted to use the `structured_output` tool.' })),
+  // Parallel fan-out mode
+  parallel:     Type.Optional(Type.Array(PARALLEL_TASK_ITEM, { description: 'Array of independent sub-tasks to run concurrently. Each item is an object with at least `task` (string). Results returned in input order, each prefixed with the agent name. Mutually exclusive with top-level `task`.' })),
+  concurrency:  Type.Optional(Type.Number({ description: 'Max parallel sub-tasks running at once. Default: 5. Lower values conserve system resources; higher values increase throughput.' })),
+  failFast:     Type.Optional(Type.Boolean({ description: 'If true, abort all remaining parallel sub-tasks on the first error. Default: false (partial tolerance — failed tasks are reported, others continue).' })),
 }, { additionalProperties: false });
-
-// ── Discriminated union: exactly one of task or parallel ──────────────────────
-
-const DELEGATE_TOOL_PARAMS = Type.Union([SINGLE_TASK_PARAMS, PARALLEL_TASK_PARAMS]);
 
 // ── Extension path resolution ─────────────────────────────────────────────────
 

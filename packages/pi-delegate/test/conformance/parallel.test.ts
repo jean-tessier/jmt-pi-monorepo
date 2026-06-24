@@ -15,21 +15,11 @@ import { Compile } from 'typebox/compile';
 
 import type { ParallelTask } from '../../src/shared/types.js';
 import { runParallel } from '../../src/parent/parallel.js';
-import type { ParallelRunOptions, ParallelResult } from '../../src/parent/parallel.js';
+import type { ParallelResult } from '../../src/parent/parallel.js';
 import { activate } from '../../src/parent/delegate-tool.js';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
-// ── Helpers: recreate the union schema as defined in delegate-tool.ts ─────────
-
-const SINGLE_TASK_PARAMS = Type.Object({
-  task: Type.String(),
-  agent: Type.Optional(Type.String()),
-  model: Type.Optional(Type.String()),
-  tools: Type.Optional(Type.Array(Type.String())),
-  prompt: Type.Optional(Type.String()),
-  promptMode: Type.Optional(Type.String()),
-  outputSchema: Type.Optional(Type.Object({})),
-}, { additionalProperties: false });
+// ── Helpers: recreate the flat schema as defined in delegate-tool.ts ──────────
 
 const PARALLEL_TASK_ITEM = Type.Object({
   task: Type.String(),
@@ -41,13 +31,18 @@ const PARALLEL_TASK_ITEM = Type.Object({
   outputSchema: Type.Optional(Type.Object({})),
 });
 
-const PARALLEL_TASK_PARAMS = Type.Object({
-  parallel: Type.Array(PARALLEL_TASK_ITEM),
-  concurrency: Type.Optional(Type.Number()),
-  failFast: Type.Optional(Type.Boolean()),
+const DELEGATE_TOOL_PARAMS = Type.Object({
+  task:         Type.Optional(Type.String()),
+  agent:        Type.Optional(Type.String()),
+  model:        Type.Optional(Type.String()),
+  tools:        Type.Optional(Type.Array(Type.String())),
+  prompt:       Type.Optional(Type.String()),
+  promptMode:   Type.Optional(Type.String()),
+  outputSchema: Type.Optional(Type.Object({})),
+  parallel:     Type.Optional(Type.Array(PARALLEL_TASK_ITEM)),
+  concurrency:  Type.Optional(Type.Number()),
+  failFast:     Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
-
-const DELEGATE_TOOL_PARAMS = Type.Union([SINGLE_TASK_PARAMS, PARALLEL_TASK_PARAMS]);
 
 // ── Compile validators once ───────────────────────────────────────────────────
 
@@ -138,17 +133,17 @@ describe('parallel schema validation', () => {
     expect(valid).toBe(true);
   });
 
-  it('rejects combined task + parallel (must be exclusive)', () => {
+  it('accepts combined task + parallel (schema-level; mutual exclusion is runtime-only)', () => {
     const valid = validator.Check({
       task: 'single task',
       parallel: [{ task: 'parallel task' }],
     });
-    expect(valid).toBe(false);
+    expect(valid).toBe(true);
   });
 
-  it('rejects neither task nor parallel', () => {
+  it('accepts neither task nor parallel (all fields optional at schema level)', () => {
     const valid = validator.Check({ concurrency: 1 });
-    expect(valid).toBe(false);
+    expect(valid).toBe(true);
   });
 
   it('rejects parallel items that are plain strings (must be objects)', () => {
@@ -202,11 +197,19 @@ describe('execute dispatcher', () => {
     expect(() => activate(mock.api)).not.toThrow();
   });
 
-  it('registers a tool with the union schema', () => {
+  it('registers a tool with a flat object schema', () => {
     activate(mock.api);
     const tool = mock.tools[0];
     expect(tool.name).toBe('delegate');
     expect(tool.parameters).toBeDefined();
+  });
+
+  it('schema root is type:object, not anyOf (OpenAI Chat Completions compat)', () => {
+    activate(mock.api);
+    const tool = mock.tools[0];
+    const params = tool.parameters as Record<string, unknown>;
+    expect(params['type']).toBe('object');
+    expect('anyOf' in params).toBe(false);
   });
 });
 
