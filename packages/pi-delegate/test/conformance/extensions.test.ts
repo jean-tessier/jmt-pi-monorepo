@@ -11,6 +11,17 @@ import { activate } from '../../src/parent/delegate-tool.js';
 import delegateProviderExtension from '../../src/delegate-provider/index.js';
 import type { ExtensionAPI, ToolDefinition, BeforeAgentStartEvent, BeforeAgentStartEventResult, ExtensionHandler } from '@earendil-works/pi-coding-agent';
 
+vi.mock('../../src/parent/spawn.js', () => ({
+  resolvePiBinary: vi.fn().mockResolvedValue('/mock/pi'),
+  spawnRun: vi.fn().mockResolvedValue({
+    output: 'mock delegated output',
+    exitCode: 0,
+    timedOut: false,
+  }),
+  generateCapabilityToken: vi.fn().mockReturnValue('mock-capability-token'),
+  buildSpawnArgs: vi.fn().mockReturnValue([]),
+}));
+
 // ── Mock ExtensionAPI ─────────────────────────────────────────────────────────
 
 /**
@@ -84,7 +95,7 @@ function createBeforeAgentStartEvent(systemPrompt = ''): BeforeAgentStartEvent {
     systemPrompt,
     systemPromptOptions: {
       selectedTools: [],
-      toolSnippets: [],
+      toolSnippets: {} as Record<string, string>,
       promptGuidelines: [],
       cwd: '/tmp',
     },
@@ -192,7 +203,7 @@ describe('parent extension (delegate-tool)', () => {
     expect(Array.isArray(result.content)).toBe(true);
     expect(result.content.length).toBeGreaterThan(0);
     expect(result.content[0]).toHaveProperty('type', 'text');
-    expect(typeof result.content[0].text).toBe('string');
+    expect(typeof (result.content[0] as { text: string }).text).toBe('string');
     expect(result.details).toBeDefined();
   });
 
