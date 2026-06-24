@@ -68,21 +68,22 @@ spec establishes the bounded contexts, ubiquitous language, and architectural ba
 
 ### 1. Registry Context
 
-**Ubiquitous Language**: *Service*, *Service Type*, *Capability*, *Registration*.
+**Ubiquitous Language**: _Service_, _Service Type_, _Capability_, _Registration_.
 
 All external actors (agents, DBs, webhooks, UIs) are modeled uniformly as **services**.
 Adding a new integration type is declarative—define a service type with its schema.
 
-| Concept | Kind | Description |
-|---------|------|-------------|
+| Concept           | Kind           | Description                                                         |
+| ----------------- | -------------- | ------------------------------------------------------------------- |
 | `ServiceRegistry` | Aggregate Root | Tracks all registered services; enforces uniqueness by `serviceId`. |
-| `Service` | Entity | Has `serviceId`, `type`, `capabilities`, `status`. |
-| `ServiceId` | Value Object | Opaque service identifier. |
-| `ServiceType` | Value Object | Enum: `agent`, `db`, `webhook`, `ui`. |
-| `Capability` | Value Object | Declared ability (e.g., `"code_review"`, `"deploy"`). |
-| `ServiceStatus` | Value Object | Enum: `active`, `disconnected`, `draining`. |
+| `Service`         | Entity         | Has `serviceId`, `type`, `capabilities`, `status`.                  |
+| `ServiceId`       | Value Object   | Opaque service identifier.                                          |
+| `ServiceType`     | Value Object   | Enum: `agent`, `db`, `webhook`, `ui`.                               |
+| `Capability`      | Value Object   | Declared ability (e.g., `"code_review"`, `"deploy"`).               |
+| `ServiceStatus`   | Value Object   | Enum: `active`, `disconnected`, `draining`.                         |
 
 **Domain Events**:
+
 - `ServiceRegistered` — a new service joined.
 - `ServiceDeregistered` — a service gracefully left.
 - `ServiceLost` — service became unresponsive (detected by heartbeat/timeout).
@@ -91,23 +92,24 @@ Adding a new integration type is declarative—define a service type with its sc
 
 ### 2. Dispatch Context
 
-**Ubiquitous Language**: *Dispatch*, *Route*, *Prompt*, *Pattern*, *Routing Rule*.
+**Ubiquitous Language**: _Dispatch_, _Route_, _Prompt_, _Pattern_, _Routing Rule_.
 
 Determines which agent handles a prompt. Supports two modes, configurable per pattern:
 
-| Mode | Behavior | Token Cost |
-|------|----------|------------|
-| **Deterministic** | `RoutingRule` maps a prompt regex/pattern → target agent. | Free |
-| **Agent-based** | Prompt goes to a *router agent*; it decides which specialized agent to dispatch. | Explicit opt-in |
+| Mode              | Behavior                                                                         | Token Cost      |
+| ----------------- | -------------------------------------------------------------------------------- | --------------- |
+| **Deterministic** | `RoutingRule` maps a prompt regex/pattern → target agent.                        | Free            |
+| **Agent-based**   | Prompt goes to a _router agent_; it decides which specialized agent to dispatch. | Explicit opt-in |
 
-| Concept | Kind | Description |
-|---------|------|-------------|
-| `DispatchRouter` | Aggregate Root | Holds routing rules and dispatches prompts. |
-| `Prompt` | Value Object | The incoming request text. |
-| `RoutingRule` | Value Object | `{ pattern: Regex, targetAgentId: ServiceId }`. |
-| `AgentRoutingDecision` | Value Object | A router agent's choice of target agent. |
+| Concept                | Kind           | Description                                     |
+| ---------------------- | -------------- | ----------------------------------------------- |
+| `DispatchRouter`       | Aggregate Root | Holds routing rules and dispatches prompts.     |
+| `Prompt`               | Value Object   | The incoming request text.                      |
+| `RoutingRule`          | Value Object   | `{ pattern: Regex, targetAgentId: ServiceId }`. |
+| `AgentRoutingDecision` | Value Object   | A router agent's choice of target agent.        |
 
 **Domain Events**:
+
 - `PromptRouted` — prompt dispatched to a target agent (includes routing mode used).
 - `RoutingFallback` — no rule matched and no router agent configured; prompt queued or rejected.
 
@@ -115,28 +117,30 @@ Determines which agent handles a prompt. Supports two modes, configurable per pa
 
 ### 3. Task Context
 
-**Ubiquitous Language**: *Task*, *Execution Plan*, *Subtask*, *Progress*, *Outcome*.
+**Ubiquitous Language**: _Task_, _Execution Plan_, _Subtask_, _Progress_, _Outcome_.
 
 The heart of orchestration. A **task** is a well-defined execution plan composed of
 ordered **subtasks**. Tasks are dispatched to subagents for execution. All state
 transitions are deterministic.
 
-| Concept | Kind | Description |
-|---------|------|-------------|
-| `Task` | Aggregate Root | Consistency boundary for a unit of execution. |
-| `Subtask` | Entity | Identity within parent task (`sequence`, `status`, `result`). |
-| `TaskId` | Value Object | Opaque task identifier. |
-| `TaskStatus` | Value Object | Enum: `pending`, `dispatched`, `running`, `completed`, `failed`, `blocked`. |
-| `ExecutionPlan` | Value Object | Full set of subtasks + dependencies + gate references. |
-| `Progress` | Value Object | `{ completed: N, total: N }` ratio. |
-| `SubtaskSequence` | Value Object | Monotonically increasing position within task. |
+| Concept           | Kind           | Description                                                                 |
+| ----------------- | -------------- | --------------------------------------------------------------------------- |
+| `Task`            | Aggregate Root | Consistency boundary for a unit of execution.                               |
+| `Subtask`         | Entity         | Identity within parent task (`sequence`, `status`, `result`).               |
+| `TaskId`          | Value Object   | Opaque task identifier.                                                     |
+| `TaskStatus`      | Value Object   | Enum: `pending`, `dispatched`, `running`, `completed`, `failed`, `blocked`. |
+| `ExecutionPlan`   | Value Object   | Full set of subtasks + dependencies + gate references.                      |
+| `Progress`        | Value Object   | `{ completed: N, total: N }` ratio.                                         |
+| `SubtaskSequence` | Value Object   | Monotonically increasing position within task.                              |
 
 **Invariants**:
+
 - A task cannot be dispatched unless its pre-conditions (gates) are satisfied.
 - A task cannot be `completed` unless all required subtasks are `completed` (or explicitly skipped).
 - Subtask sequence must be monotonically increasing.
 
 **Domain Events**:
+
 - `TaskCreated`
 - `TaskDispatched`
 - `TaskRunning`
@@ -150,20 +154,21 @@ transitions are deterministic.
 
 ### 4. Execution Context
 
-**Ubiquitous Language**: *Subagent*, *Assignment*, *Execution*, *Heartbeat*.
+**Ubiquitous Language**: _Subagent_, _Assignment_, _Execution_, _Heartbeat_.
 
-A **subagent** is the *executor* assigned to a task. It is not the task itself—it is
+A **subagent** is the _executor_ assigned to a task. It is not the task itself—it is
 the worker that runs the plan. A subagent may execute multiple subtasks.
 
-| Concept | Kind | Description |
-|---------|------|-------------|
-| `Subagent` | Aggregate Root | Represents a running worker bound to a task. |
-| `SubagentId` | Value Object | Opaque subagent identifier. |
-| `Assignment` | Value Object | `{ taskId, subagentId, assignedAt }`. |
-| `ExecutionStatus` | Value Object | Enum: `idle`, `executing`, `stalled`, `completed`. |
-| `Heartbeat` | Value Object | Timestamped signal from subagent. |
+| Concept           | Kind           | Description                                        |
+| ----------------- | -------------- | -------------------------------------------------- |
+| `Subagent`        | Aggregate Root | Represents a running worker bound to a task.       |
+| `SubagentId`      | Value Object   | Opaque subagent identifier.                        |
+| `Assignment`      | Value Object   | `{ taskId, subagentId, assignedAt }`.              |
+| `ExecutionStatus` | Value Object   | Enum: `idle`, `executing`, `stalled`, `completed`. |
+| `Heartbeat`       | Value Object   | Timestamped signal from subagent.                  |
 
 **Domain Events**:
+
 - `SubagentAssigned`
 - `SubagentStarted`
 - `SubagentProgress` — includes subtask-level progress.
@@ -175,28 +180,30 @@ the worker that runs the plan. A subagent may execute multiple subtasks.
 
 ### 5. Gating Context
 
-**Ubiquitous Language**: *Gate*, *Pre-condition*, *Post-condition*, *Dependency*, *Condition*, *Policy*, *Signal*.
+**Ubiquitous Language**: _Gate_, _Pre-condition_, _Post-condition_, _Dependency_, _Condition_, _Policy_, _Signal_.
 
 Gates are deterministic synchronization points. They evaluate composable conditions
 against service state and task state. Tasks reference gates as pre-conditions
 (before dispatch) and post-conditions (after completion).
 
-| Concept | Kind | Description |
-|---------|------|-------------|
-| `Gate` | Aggregate Root | Named synchronization point with policy. |
-| `Condition` | Entity | Single evaluable rule within a gate. |
-| `GateId` | Value Object | Opaque gate identifier. |
-| `ConditionExpression` | Value Object | Evaluable expression (e.g., `task:X.status == completed`, `db:Y.query(...)`). |
-| `GatePolicy` | Value Object | Enum: `all_of`, `any_of`, `exactly_N`. |
-| `DependencySpec` | Value Object | Set of task IDs that must complete. |
-| `GateState` | Value Object | Enum: `open`, `closed`, `opening`, `failed`. |
+| Concept               | Kind           | Description                                                                   |
+| --------------------- | -------------- | ----------------------------------------------------------------------------- |
+| `Gate`                | Aggregate Root | Named synchronization point with policy.                                      |
+| `Condition`           | Entity         | Single evaluable rule within a gate.                                          |
+| `GateId`              | Value Object   | Opaque gate identifier.                                                       |
+| `ConditionExpression` | Value Object   | Evaluable expression (e.g., `task:X.status == completed`, `db:Y.query(...)`). |
+| `GatePolicy`          | Value Object   | Enum: `all_of`, `any_of`, `exactly_N`.                                        |
+| `DependencySpec`      | Value Object   | Set of task IDs that must complete.                                           |
+| `GateState`           | Value Object   | Enum: `open`, `closed`, `opening`, `failed`.                                  |
 
 **Composition**:
+
 - Pre-condition: gate must be `open` before task dispatches.
 - Post-condition: the `TaskCompleted` event (from the Task Context) is subscribed to by the gate, which evaluates and transitions to `open` if conditions are satisfied.
 - Dependency: a gate subscribes to events from a set of tasks and evaluates once the `DependencySpec` is satisfied (per `GatePolicy`).
 
 **Domain Events**:
+
 - `GateOpened`
 - `GateClosed`
 - `GateEvaluationFailed`
@@ -219,19 +226,20 @@ without modifying publishers.
 
 ### 7. Monitoring Context
 
-**Ubiquitous Language**: *Snapshot*, *Query*, *Watch*, *Filter*, *Projection*.
+**Ubiquitous Language**: _Snapshot_, _Query_, _Watch_, _Filter_, _Projection_.
 
 Monitoring is the **CQRS read side**. It does not mutate domain state—it projects it.
 
-| Concept | Kind | Description |
-|---------|------|-------------|
-| `TaskSnapshot` | Read Model | Current state, progress, assigned subagent, gate status. |
-| `SubagentSnapshot` | Read Model | Current task, execution status, last heartbeat. |
-| `SubtaskSnapshot` | Read Model | Status, sequence, result within parent task. |
-| `EventFilter` | Value Object | Filter by type, time range, task/agent ID. |
-| `TimeRange` | Value Object | Bounded window for history queries. |
+| Concept            | Kind         | Description                                              |
+| ------------------ | ------------ | -------------------------------------------------------- |
+| `TaskSnapshot`     | Read Model   | Current state, progress, assigned subagent, gate status. |
+| `SubagentSnapshot` | Read Model   | Current task, execution status, last heartbeat.          |
+| `SubtaskSnapshot`  | Read Model   | Status, sequence, result within parent task.             |
+| `EventFilter`      | Value Object | Filter by type, time range, task/agent ID.               |
+| `TimeRange`        | Value Object | Bounded window for history queries.                      |
 
 **Operations**:
+
 - `GetTaskStatus(taskId)` — single task snapshot.
 - `ListTasks(filter)` — filtered task list.
 - `ListSubagents()` — all active subagents.
@@ -245,20 +253,20 @@ All monitoring queries read from the **current state snapshot** (fast) or the
 
 ## State & Persistence
 
-| Concern | Strategy |
-|---------|----------|
-| Current state | In-memory snapshot for fast reads. |
-| History | Bounded event log. Configurable retention (default: last 1000 events or 24h). Auto-pruned. |
-| Crash recovery | State serialized to disk. On restart, load snapshot + replay bounded log. |
+| Concern        | Strategy                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| Current state  | In-memory snapshot for fast reads.                                                         |
+| History        | Bounded event log. Configurable retention (default: last 1000 events or 24h). Auto-pruned. |
+| Crash recovery | State serialized to disk. On restart, load snapshot + replay bounded log.                  |
 
 **Repositories** (ports—interfaces only, implementations provided by the server):
 
-| Repository | Aggregate |
-|------------|-----------|
-| `TaskRepository` | `Task` |
-| `ServiceRepository` | `ServiceRegistry` |
-| `GateRepository` | `Gate` |
-| `EventStore` | Domain events (append + bounded read) |
+| Repository          | Aggregate                             |
+| ------------------- | ------------------------------------- |
+| `TaskRepository`    | `Task`                                |
+| `ServiceRepository` | `ServiceRegistry`                     |
+| `GateRepository`    | `Gate`                                |
+| `EventStore`        | Domain events (append + bounded read) |
 
 Persistence implementation for MVP: file-based. Swappable for future alternatives.
 
@@ -266,10 +274,10 @@ Persistence implementation for MVP: file-based. Swappable for future alternative
 
 ## Client Categories
 
-| Client Type | Examples | Interaction Pattern |
-|-------------|----------|---------------------|
-| **Agent** | Pi subagents | Dispatch tasks, report progress, query status. |
-| **Human** | TUI, future web UI | Submit prompts, monitor progress, approve gates. |
+| Client Type | Examples                    | Interaction Pattern                                            |
+| ----------- | --------------------------- | -------------------------------------------------------------- |
+| **Agent**   | Pi subagents                | Dispatch tasks, report progress, query status.                 |
+| **Human**   | TUI, future web UI          | Submit prompts, monitor progress, approve gates.               |
 | **Service** | DBs, CI pipelines, webhooks | Register as gate condition sources, emit events, provide data. |
 
 All clients speak the same protocol. The server does not differentiate behavior
@@ -279,25 +287,25 @@ by client type—it only authenticates via service registration.
 
 ## Error Handling
 
-| Scenario | Response |
-|----------|----------|
-| Service disconnects | Tasks assigned to it marked `blocked`; `ServiceLost` event emitted. |
-| Gate timeout | Task marked `stale`; configurable retry policy or alert via event. |
-| Crash | Reload from disk snapshot + replay bounded log. |
-| No route matches prompt | `RoutingFallback` event emitted; prompt queued or rejected per config. |
-| Subagent timeout (heartbeat) | `SubagentTimeout` event emitted; task marked `blocked`. |
-| Gate evaluation fails | `GateEvaluationFailed` event; task remains gated. |
+| Scenario                     | Response                                                               |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| Service disconnects          | Tasks assigned to it marked `blocked`; `ServiceLost` event emitted.    |
+| Gate timeout                 | Task marked `stale`; configurable retry policy or alert via event.     |
+| Crash                        | Reload from disk snapshot + replay bounded log.                        |
+| No route matches prompt      | `RoutingFallback` event emitted; prompt queued or rejected per config. |
+| Subagent timeout (heartbeat) | `SubagentTimeout` event emitted; task marked `blocked`.                |
+| Gate evaluation fails        | `GateEvaluationFailed` event; task remains gated.                      |
 
 ---
 
 ## Testing Strategy
 
-| Layer | Approach |
-|-------|----------|
-| Domain logic | Pure unit tests. No I/O, no mocks needed for domain rules. |
-| Event bus | Test event publication and subscription ordering. |
-| Server wrapper | Integration tests: transport serialization, request routing. |
-| End-to-end | Spin up server, register services, dispatch tasks, assert event stream and final state. |
+| Layer          | Approach                                                                                |
+| -------------- | --------------------------------------------------------------------------------------- |
+| Domain logic   | Pure unit tests. No I/O, no mocks needed for domain rules.                              |
+| Event bus      | Test event publication and subscription ordering.                                       |
+| Server wrapper | Integration tests: transport serialization, request routing.                            |
+| End-to-end     | Spin up server, register services, dispatch tasks, assert event stream and final state. |
 
 ---
 
@@ -318,4 +326,6 @@ by client type—it only authenticates via service registration.
 
 1. Resolve open questions above.
 2. Define MVP feature set by grading: **must have**, **nice to have**, **now now**, **won't do**.
-3. Create implementation plan with task breakdown per bounded context.
+3. Research then brainstorm tech stack choices (we prefer to consume open source utilities to rolling-our-own; however, you _MUST_ check for CVEs when considering package options and you _NEVER_ download unpopular or questionable packages).
+4. Define MVP tech stack and project directory structure
+5. Create implementation plan with task breakdown per bounded context.
