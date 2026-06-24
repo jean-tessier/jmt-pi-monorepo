@@ -344,7 +344,8 @@ async function executeParallel(
           outputSchema: task.outputSchema,
         },
         pi,
-        signal
+        signal,
+        parentOnUpdate
       );
     }
   );

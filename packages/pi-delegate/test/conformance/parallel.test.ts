@@ -448,3 +448,71 @@ describe('executeParallel signal forwarding', () => {
     expect(callOptions.signal?.aborted).toBe(true);
   });
 });
+
+// ── Tests: onUpdate forwarding in executeParallel ─────────────────────────────
+
+describe('executeParallel onUpdate forwarding', () => {
+  let mock: ReturnType<typeof createMockAPI>;
+
+  beforeEach(() => {
+    mock = createMockAPI();
+    delete process.env.PI_DELEGATE_TOKEN;
+    vi.mocked(spawnRun).mockClear();
+  });
+
+  it('forwards onUpdate to each parallel branch via executeSingle → spawnRun', async () => {
+    // spawnRun is mocked at module level; configure it to fire the onUpdate callback once per call
+    vi.mocked(spawnRun).mockImplementation(async (_binary, _args, _tempFiles, options) => {
+      // Fire a synthetic agent_start event so onUpdate is exercised
+      options.onUpdate?.({ type: 'agent_start', agent: 'default' });
+      return { output: 'mock output', exitCode: 0, timedOut: false };
+    });
+
+    activate(mock.api);
+    const tool = mock.tools[0];
+
+    const onUpdate = vi.fn();
+
+    await tool.execute(
+      'call-onupdate-forwarding',
+      { parallel: [{ task: 'branch A' }, { task: 'branch B' }] },
+      undefined,
+      onUpdate,
+      {} as any,
+    );
+
+    // spawnRun was called twice (once per branch)
+    expect(vi.mocked(spawnRun)).toHaveBeenCalledTimes(2);
+
+    // onUpdate was forwarded and called at least once per branch (2 agent_start events minimum)
+    expect(onUpdate.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // Each call to onUpdate must have been invoked with the framework-shaped payload
+    for (const call of onUpdate.mock.calls) {
+      const payload = call[0] as { content: Array<{ type: string; text: string }>; details: Record<string, unknown> };
+      expect(payload).toHaveProperty('content');
+      expect(Array.isArray(payload.content)).toBe(true);
+      expect(payload.content[0]).toMatchObject({ type: 'text' });
+    }
+  });
+
+  it('completes without error when onUpdate is not provided (regression)', async () => {
+    vi.mocked(spawnRun).mockResolvedValue({ output: 'ok', exitCode: 0, timedOut: false });
+
+    activate(mock.api);
+    const tool = mock.tools[0];
+
+    // No onUpdate argument — fourth parameter omitted (undefined)
+    const result = await tool.execute(
+      'call-no-onupdate',
+      { parallel: [{ task: 'branch A' }, { task: 'branch B' }] },
+      undefined,
+      undefined,
+      {} as any,
+    );
+
+    expect(vi.mocked(spawnRun)).toHaveBeenCalledTimes(2);
+    // Tool result should still be returned correctly
+    expect(result).toHaveProperty('content');
+  });
+});

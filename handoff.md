@@ -2,37 +2,36 @@
 
 ## What was completed this session
 
-**Step 10 — End-to-End Test** — E2E test suite created at `test/e2e/server.e2e.test.ts`. Spawns `dist/src/main.js` as a child process, drives it via stdin with line-delimited JSON, and asserts stdout responses. 5 scenarios: empty list_tasks, register→route→dispatch→status, subtask auto-complete, invalid JSON parse error, unknown method -32601. Dedicated `vitest.e2e.config.ts` keeps E2E out of the default test run. `test:e2e` script added to `package.json`. Fixed two implementation details: correct path (`../../dist/src/main.js` not `../../../`), and `child.kill()` required because `HeartbeatTicker`'s `setInterval` keeps the process alive after stdin closes.
-
-**All 5 E2E tests pass. Typecheck clean. Default tests: 120 passing, 2 skipped.**
+**`onUpdate` forwarding in `executeParallel` (delegate package)** — wired `parentOnUpdate` from `executeParallel`'s fourth argument down into each `executeSingle` call inside the `runOne` callback. Added 2 new tests in `parallel.test.ts` verifying the forwarding and regression (no-onUpdate path). 71/71 tests pass (was 69), 0 skipped, 0 typecheck errors in modified files.
 
 ---
 
 ## Completed Work
 
-### Files created/modified this session
+### What changed this session
 
-| File | What it contains |
+| File | What changed |
 |---|---|
-| `packages/agent-orchestration-hub/test/e2e/server.e2e.test.ts` | 5 E2E scenarios spawning `dist/src/main.js` |
-| `packages/agent-orchestration-hub/vitest.e2e.config.ts` | Vitest config for E2E: includes only `test/e2e/**`, sets `testTimeout` and `hookTimeout` to 10s |
-| `packages/agent-orchestration-hub/vitest.config.ts` | Updated `include` to `['test/unit/**/*.test.ts', 'test/integration/**/*.test.ts']` (excludes e2e) |
-| `packages/agent-orchestration-hub/package.json` | Added `"test:e2e": "vitest run --config vitest.e2e.config.ts"` |
+| `packages/pi-delegate/src/parent/delegate-tool.ts` | Added `parentOnUpdate` as 4th arg to `executeSingle(...)` call inside `executeParallel`'s `runOne` callback |
+| `packages/pi-delegate/test/conformance/parallel.test.ts` | Added `describe('executeParallel onUpdate forwarding', ...)` with 2 new tests: forwarding verified per-branch + regression (no-onUpdate completes without error) |
 
-### Key implementation details
+### Key design decisions
 
-- **Path resolution**: `SERVER_PATH = resolve(__dirname, '../../dist/src/main.js')` — 2 levels up from `test/e2e/` to package root.
-- **Process cleanup**: `child.kill()` is required; `child.stdin.end()` alone is insufficient because `HeartbeatTicker`'s `setInterval` keeps the process alive.
-- **readline per request**: Each `sendRequest()` call creates a fresh `createInterface({ input: child.stdout })` and closes it after one line — avoids buffering issues.
-- **hookTimeout**: Set to 10 000 ms in `vitest.e2e.config.ts` so `afterEach` (which waits for `child.on('close')`) does not time out.
+- **Single-line change in `delegate-tool.ts`**: `executeParallel` already received `parentOnUpdate` as its 4th parameter; it just wasn't threading it through to `executeSingle`. The fix adds the 4th arg to the `executeSingle(...)` call at line 346.
+- **Each parallel branch gets the same `onUpdate` callback** (the caller receives updates from all branches interleaved). This matches the key constraint: no deduplication or ordering is imposed.
+- **No-op injection avoided**: The `if (parentOnUpdate)` guard already lives inside `executeSingle` → `spawnRun`; if the caller omits `onUpdate`, nothing is injected.
+- **Test strategy**: The `spawnRun` mock is configured per-test via `vi.mocked(spawnRun).mockImplementation(...)` to fire `onUpdate` events, proving the callback reaches `spawnRun`.
 
-### Final verification
+### Test counts
 
-```
-pnpm --filter @my-pi/agent-orchestration-hub typecheck   → exit 0
-pnpm --filter @my-pi/agent-orchestration-hub test        → 120 passed, 2 skipped (16 files)
-pnpm --filter @my-pi/agent-orchestration-hub test:e2e    → 5 passed (1 file)
-```
+| File | Tests |
+|---|---|
+| `test/conformance/parallel.test.ts` | 25 (was 23; +2 new onUpdate forwarding tests) |
+| All other files | unchanged |
+| **Total** | **71 passed, 0 skipped** |
+
+`pnpm --filter pi-delegate typecheck` → 0 errors in project files (pre-existing errors in `parallel-work/` worktree and `node_modules` types are unrelated).
+`pnpm --filter pi-delegate test` → 71 passed, 0 skipped.
 
 ---
 
@@ -47,28 +46,16 @@ pnpm --filter @my-pi/agent-orchestration-hub test:e2e    → 5 passed (1 file)
 | Verify fixes with tests + live run | ✅ Done | 69/69 pass; 2 live headless runs |
 | Commit delegate fixes + design docs | ✅ Done | `fce5be0` + `0d7848b` |
 | Write implementation plan | ✅ Done | 1,080-line doc; all 10 steps covered |
-| Implement Step 1 — Package Scaffold | ✅ Done | typecheck 0; 1/1 test passing |
-| Implement Step 2 — Event Bus | ✅ Done | typecheck 0; 9/9 tests passing |
-| Implement Step 3 — Registry Context | ✅ Done | typecheck 0; 27/27 tests passing |
-| Implement Step 4 — Task Context | ✅ Done | typecheck 0; 53/53 tests passing |
-| Implement Step 5 — Execution Context | ✅ Done | typecheck 0; 66/66 tests passing |
-| Implement Step 6 — Gating Context | ✅ Done | typecheck 0; 80/80 tests passing |
-| Implement Step 7 — Dispatch Context | ✅ Done | typecheck 0; 92/92 tests passing |
-| Implement Step 8 — Monitoring Context | ✅ Done | typecheck 0; 106/106 tests passing |
-| Implement Step 9 — Server Wrapper (stdio) | ✅ Done | typecheck 0; 120/122 tests passing (2 skipped) |
-| Implement Step 10 — End-to-End Test | ✅ Done | typecheck 0; 120/122 unit+integration + 5/5 E2E |
+| Implement Steps 1–10 — Full MVP | ✅ Done | 120 unit+integration + 5 E2E; `4ad4ba8` |
+| Unskip hub wiring: post-condition gates + subagent timeout | ✅ Done | 122/122 pass, 0 skipped; typecheck clean |
+| Fix `listTasks(filter.serviceId)` in MonitoringProjection | ✅ Done | 127/127 pass, 0 skipped; typecheck clean |
+| `onUpdate` forwarding in `executeParallel` (delegate) | ✅ Done this session | 71/71 pass, 0 skipped |
 
 ---
 
 ## Next Task
 
-**Goal met — no further tasks planned.** The Agent Orchestration Hub MVP is complete.
-
-All 10 steps of the implementation plan are done:
-- Typecheck exits 0
-- 120 unit/integration tests passing, 2 skipped (pre-existing)
-- 5 E2E tests passing
-- Server handles all 10 protocol methods, line-delimited JSON I/O over stdio
+No further tasks remain from the original task list. All 3 originally-planned tasks are complete.
 
 ---
 
@@ -76,10 +63,17 @@ All 10 steps of the implementation plan are done:
 
 | # | Item | Status |
 |---|---|---|
-| 1 | stdio protocol format — JSON-RPC 2.0 vs line-delimited JSON? | Resolved by impl plan: line-delimited JSON (not JSON-RPC 2.0) |
-| 2 | Snapshot format — JSON vs YAML for state files? | Open — low priority; resolve before any persistence task |
-| 3 | `onUpdate` forwarding in `executeParallel` → `executeSingle` | Open — delegate enhancement only, not blocking hub work |
-| 4 | `agent: "default"` INVALID_PARAMS error message clarification | Open — doc/UX improvement |
-| 5 | `listTasks(filter.serviceId)` not implementable from snapshot alone | Open — `_serviceTaskMap` in Hub is available; deferred beyond MVP |
-| 6 | Two hub wiring tests skipped | Open — `opens post-condition gates` and `blocks on subagent timeout`; unskip when subagent flow is exposed in the protocol |
-| 7 | `HeartbeatTicker` prevents clean stdin-close exit | Known — `child.kill()` required; acceptable for MVP; could add `rl.on('close', ticker.stop)` in a future iteration |
+| 1 | `agent: "default"` INVALID_PARAMS error message clarification | Open — doc/UX improvement, not blocking |
+| 2 | Snapshot format — JSON vs YAML for state files (persistence layer) | Open — low priority; resolve before any persistence task |
+| 3 | `dispatch_prompt` protocol always creates tasks with empty gate arrays — no way to create gated tasks via the protocol | Open — consider adding `create_gated_task` method or `preConditionGateIds` param to `dispatch_prompt` |
+
+---
+
+## Standing rules
+- Proceed on documented defaults. Do NOT ask the user questions unless you hit a hard block.
+- A hard block = a missing file that cannot be created, a required credential not obtainable, or a compile/test failure you cannot resolve after reasonable effort.
+- On hard block: add a clear blocker note to handoff.md Open items and exit.
+- On ambiguity: pick the documented default, note it in the handoff under Open items, continue.
+- Do NOT expand scope beyond the Next task and its Definition of Done.
+- The task is done only when EVERY Definition of Done criterion is verified and checkable.
+- Re-write handoff.md using the handoff-document structure before exiting.
