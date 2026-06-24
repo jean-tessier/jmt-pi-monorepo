@@ -50,7 +50,7 @@ Override with the `PI_DELEGATE_CONFIG_PATH` environment variable.
 {
   "maxDepth": 2,
   "piBinaryPath": "/usr/local/bin/pi",
-  "runTimeoutMs": 120000,
+  "runTimeoutMs": 600000,
   "maxInFlightChildren": 10,
   "sandboxCommand": "firejail",
   "childCwd": "/tmp/pi-delegate-work"
@@ -61,7 +61,7 @@ Override with the `PI_DELEGATE_CONFIG_PATH` environment variable.
 |-----|---------|-------------|
 | `maxDepth` | `2` | Maximum delegation depth. `0` disables delegation entirely. |
 | `piBinaryPath` | (from PATH) | Override the `pi` executable location. |
-| `runTimeoutMs` | (no limit) | Wall-clock timeout (ms) per child run. Exceeded runs return `TIMEOUT`. |
+| `runTimeoutMs` | `600000` | Wall-clock timeout (ms) per child run; default is 10 min. Exceeded runs return `TIMEOUT`. |
 | `maxInFlightChildren` | (no limit) | Maximum concurrent child processes. |
 | `sandboxCommand` | (none) | Prefix command for OS-level sandboxing (e.g. `firejail`). |
 | `childCwd` | (auto-created temp dir) | Override the child's working directory. |

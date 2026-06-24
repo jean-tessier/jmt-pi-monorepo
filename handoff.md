@@ -2,40 +2,40 @@
 
 ## What was completed this session
 
-**Phase 1 — pi-delegate bug fixes (complete)**
-Both root-cause bugs patched, 69 tests green, live headless verification done (prior session recorded in detail below).
-
-**Phase 2 — Agent Orchestration Hub design (in progress)**
-Three design documents written; implementation has not started.
+**Step 2 — Event Bus** — `DomainEvent` base interface, `EventBus` port, `MittEventBus` (mitt-backed production adapter), `InMemoryEventBus` (synchronous test adapter) are all implemented. Events barrel updated. 8 tests pass; total package test count is 9.
 
 ---
 
 ## Completed Work
 
-### pi-delegate bug fixes
-
-| File | What changed |
-|---|---|
-| `packages/pi-delegate/src/parent/config.ts` | Added `runTimeoutMs: 600_000` to the default `config` object in `loadConfig()` |
-| `packages/pi-delegate/src/parent/delegate-tool.ts` | In `executeParallel`'s `runOne` callback: renamed `_signal` → `signal`; passed it as 3rd arg to `executeSingle` |
-| `packages/pi-delegate/test/conformance/parallel.test.ts` | Added `vi.mock` for `spawn.js`; `loadConfig defaults` describe block; `executeParallel signal forwarding` describe block |
-
-**Test counts**: 66 → 69. `pnpm -F pi-delegate test`: 69/69 pass.
-**Live verification**: Two headless runs on `openrouter/owl-alpha` (2m37s and 3m13s); no hang, no error.
-
-**Note**: These changes are uncommitted (`git status` shows them as modified). Commit before continuing.
-
----
-
-### Agent Orchestration Hub design documents
+### Files created/modified
 
 | File | What it contains |
 |---|---|
-| `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-design.md` | Full DDD architecture: 6 bounded contexts, ubiquitous language, domain events, state/persistence strategy, open questions, next steps |
-| `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-mvp-grading.md` | Feature grading (Must have / Nice to have / Now now / Won't do) for every concept in all 6 bounded contexts; MVP summary user story |
-| `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-tech-stack.md` | Research + recommendations: mitt (event bus), nanoid (IDs), typebox (keep), vitest (keep), raw fs (persistence), no HTTP for MVP; CVE-checked, 2 new runtime deps |
+| `packages/agent-orchestration-hub/src/lib/events/domain-event.ts` | `DomainEvent` interface: `readonly type: string`, `readonly occurredAt: Date` |
+| `packages/agent-orchestration-hub/src/lib/events/event-bus.ts` | `EventBus` port: `emit(event)`, `on<E>(type, handler)`, `off<E>(type, handler)` |
+| `packages/agent-orchestration-hub/src/lib/events/in-memory-event-bus.ts` | `InMemoryEventBus`: `Map<string, Set<handler>>`; synchronous dispatch; no runtime deps beyond `DomainEvent`/`EventBus` |
+| `packages/agent-orchestration-hub/src/lib/events/mitt-event-bus.ts` | `MittEventBus`: only file in `lib/` that imports `mitt`; wraps `Emitter<Record<string, DomainEvent>>` |
+| `packages/agent-orchestration-hub/src/lib/events/index.ts` | Re-exports `DomainEvent`, `EventBus`, `InMemoryEventBus`, `MittEventBus` |
+| `packages/agent-orchestration-hub/test/unit/events/event-bus.test.ts` | 8 tests: 6 for `InMemoryEventBus`, 2 for `MittEventBus` |
+| `packages/agent-orchestration-hub/tsconfig.json` | Added `"esModuleInterop": true` (see below) |
 
-These files are untracked — also need to be committed.
+### Key design decisions
+
+- **mitt NodeNext interop workaround** — mitt lacks `"type": "module"` so TypeScript 5.9 under NodeNext treats its `.d.ts` as CJS, making `import mitt from 'mitt'` resolve to the module namespace (not callable). Fixed with `import _mittFactory from 'mitt'` + `const createMitt = _mittFactory as unknown as MittFactory`. Added `esModuleInterop: true` to the package tsconfig; this alone was not sufficient but is kept for correctness.
+- **`InMemoryEventBus` imports only `DomainEvent` and `EventBus`** — no runtime dep; safe to use in all tests.
+- **Handler cast in `on`/`off`** — public API is generic `(event: E) => void`; internal map stores `(event: DomainEvent) => void`. Single cast at the `Set.add`/`Set.delete` call site is the only unsafe spot.
+
+### Test counts
+
+| File | Tests |
+|---|---|
+| `test/unit/scaffold.test.ts` | 1 |
+| `test/unit/events/event-bus.test.ts` | 8 |
+| **Total** | **9** |
+
+`pnpm --filter @my-pi/agent-orchestration-hub typecheck` → exit 0  
+`pnpm --filter @my-pi/agent-orchestration-hub test` → 9 passed
 
 ---
 
@@ -43,111 +43,177 @@ These files are untracked — also need to be committed.
 
 | Task | Status | Notes |
 |---|---|---|
-| Fix `anyOf`-at-root schema (delegate tool) | ✅ Done | Flat `Type.Object` schema; prior session |
-| Investigate parallel subagent hang | ✅ Done | Two bugs identified and pinned; prior session |
-| Fix Bug 1: add default `runTimeoutMs` | ✅ Done | `config.ts`; 600 000 ms default |
-| Fix Bug 2: forward signal in `executeParallel` | ✅ Done | `delegate-tool.ts:332`; one rename + one arg |
-| Verify fixes with tests + live run | ✅ Done | 69/69 pass; 2 live headless runs |
-| Commit all pending changes | 🔜 Next (trivial) | Delegate fixes + all three design docs |
-| Define project directory structure | 🔜 Next | Tech stack doc has packages, not directory layout |
-| Write implementation plan (task breakdown) | 🔜 Next | Per bounded context; this is Step 5 in the design spec |
-| Implement Agent Orchestration Hub package | ⬜ Not started | Blocked on implementation plan |
+| Fix `anyOf`-at-root schema (delegate tool) | ✅ Done (prior session) | Flat `Type.Object` schema |
+| Investigate parallel subagent hang | ✅ Done (prior session) | Two bugs identified |
+| Fix Bug 1: add default `runTimeoutMs` | ✅ Done (prior session) | `config.ts`; 600 000 ms |
+| Fix Bug 2: forward signal in `executeParallel` | ✅ Done (prior session) | `delegate-tool.ts`; rename + arg |
+| Verify fixes with tests + live run | ✅ Done (prior session) | 69/69 pass; 2 live headless runs |
+| Commit delegate fixes + design docs | ✅ Done (prior session) | `fce5be0` + `0d7848b` |
+| Write implementation plan | ✅ Done (prior session) | 1,080-line doc; all 10 steps covered |
+| Implement Step 1 — Package Scaffold | ✅ Done (prior session) | typecheck 0; 1/1 test passing |
+| Implement Step 2 — Event Bus | ✅ Done this session | typecheck 0; 9/9 tests passing |
+| Implement Step 3 — Registry Context | 🔜 Next | Unblocked |
+| Implement Steps 4–10 | ⬜ Not started | Follow plan sequentially |
 
 ---
 
 ## Next Task
 
-### Commit pending changes + write the implementation plan
+### Step 3 — Registry Context
 
-**Source**: Design spec "Next Steps" §4–5; this is the last planning step before implementation.
+**Source**: `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-impl-plan.md` § "Step 3 — Registry Context"
 
-**Goal**: Get all pending work committed, then produce the implementation plan document that breaks the Agent Orchestration Hub into concrete, sequenced coding tasks — one per bounded context. The plan is what the next session uses to start writing code.
-
----
-
-#### Step 0: Commit pending changes
-
-Run these two commits (in order):
-
-```bash
-# 1 — delegate bug fixes
-git add packages/pi-delegate/src/parent/config.ts \
-        packages/pi-delegate/src/parent/delegate-tool.ts \
-        packages/pi-delegate/test/conformance/parallel.test.ts
-git commit -m "fix(delegate): add default runTimeoutMs; forward signal in executeParallel"
-
-# 2 — design docs (including updated design spec and new grading + tech-stack docs)
-git add docs/superpowers/specs/ .agents/ handoff.md
-git rm interrupted.md   # deleted in working tree
-git commit -m "docs: add agent orchestration hub MVP grading and tech stack research"
-```
+**Goal**: Implement the Registry bounded context. This means: `ServiceId` branded type (nanoid factory), `ServiceType` and `ServiceStatus` enums, `Service` entity, three domain event interfaces (`ServiceRegistered`, `ServiceDeregistered`, `ServiceLost`), and the `ServiceRegistry` aggregate that emits those events via the `EventBus`. After this step services can register, heartbeat, deregister, and be declared lost.
 
 ---
 
-#### Step 1: Define project directory structure
+#### Files to create/modify
 
-The tech-stack doc covers *what* packages to use but not *where files live*. Define the layout for `packages/agent-orchestration-hub/` before writing the implementation plan.
+| Path | What it contains |
+|---|---|
+| `packages/agent-orchestration-hub/src/lib/registry/service-id.ts` | `ServiceId` branded type; `createServiceId()` factory using `nanoid` |
+| `packages/agent-orchestration-hub/src/lib/registry/service-type.ts` | `ServiceType` enum: `agent`, `db`, `webhook`, `ui` |
+| `packages/agent-orchestration-hub/src/lib/registry/service-status.ts` | `ServiceStatus` enum: `active`, `disconnected`, `draining` |
+| `packages/agent-orchestration-hub/src/lib/registry/service.ts` | `Service` entity interface: `serviceId`, `type`, `status`, `registeredAt`, `lastHeartbeatAt` |
+| `packages/agent-orchestration-hub/src/lib/registry/registry-events.ts` | `ServiceRegistered`, `ServiceDeregistered`, `ServiceLost` — each extends `DomainEvent` |
+| `packages/agent-orchestration-hub/src/lib/registry/service-registry.ts` | `ServiceRegistry` class (aggregate root); `ServiceRegistryOptions` interface |
+| `packages/agent-orchestration-hub/src/lib/registry/index.ts` | Re-exports all of the above (replaces empty barrel) |
+| `packages/agent-orchestration-hub/src/lib/events/domain-event.ts` | Add `DomainEventType` union `'service.registered' \| 'service.deregistered' \| 'service.lost'` |
+| `packages/agent-orchestration-hub/test/unit/registry/service-registry.test.ts` | 14 tests across all `ServiceRegistry` methods |
+| `packages/agent-orchestration-hub/test/unit/registry/service-id.test.ts` | 2 tests for `createServiceId` |
 
-Proposed layout (confirm before writing the plan):
+#### Read before coding
 
+1. **`docs/superpowers/specs/2026-06-23-agent-orchestration-hub-impl-plan.md` § "Step 3"** — canonical type sketches, full test list, definition of done
+2. **`packages/agent-orchestration-hub/src/lib/events/domain-event.ts`** — this is what you're extending with `DomainEventType`
+3. **`packages/agent-orchestration-hub/src/lib/events/event-bus.ts`** — `EventBus` interface `ServiceRegistry` depends on
+4. **`packages/agent-orchestration-hub/src/lib/registry/index.ts`** — currently empty barrel you're filling
+
+#### Key constraints
+
+- `ServiceRegistry` must accept `EventBus` via constructor injection — never import `MittEventBus` or `InMemoryEventBus` directly from registry code
+- All intra-package imports need `.js` extensions (NodeNext module resolution)
+- `createServiceId()` must use `nanoid` (already in `dependencies`) — not `crypto.randomUUID()`
+- `checkForLostServices(nowMs)` takes a numeric timestamp arg (not `Date.now()`) so tests can control time deterministically
+- `register()` must throw if the same `serviceId` is already in the map (not silently overwrite)
+- `deregister()` and `heartbeat()` must throw if `serviceId` not found
+- `checkForLostServices` must NOT emit `ServiceLost` for a service that is already `disconnected` (guards against duplicate events)
+
+#### Suggested data shapes
+
+```ts
+// service-id.ts
+declare const ServiceIdBrand: unique symbol
+export type ServiceId = string & { readonly [ServiceIdBrand]: void }
+export function createServiceId(): ServiceId
+
+// service-type.ts
+export enum ServiceType { agent = 'agent', db = 'db', webhook = 'webhook', ui = 'ui' }
+
+// service-status.ts
+export enum ServiceStatus { active = 'active', disconnected = 'disconnected', draining = 'draining' }
+
+// service.ts
+export interface Service {
+  readonly serviceId: ServiceId
+  readonly type: ServiceType
+  status: ServiceStatus
+  readonly registeredAt: Date
+  lastHeartbeatAt: Date
+}
+
+// registry-events.ts
+export interface ServiceRegistered extends DomainEvent {
+  readonly type: 'service.registered'
+  readonly serviceId: ServiceId
+  readonly serviceType: ServiceType
+}
+export interface ServiceDeregistered extends DomainEvent {
+  readonly type: 'service.deregistered'
+  readonly serviceId: ServiceId
+}
+export interface ServiceLost extends DomainEvent {
+  readonly type: 'service.lost'
+  readonly serviceId: ServiceId
+  readonly lastHeartbeatAt: Date
+}
+
+// service-registry.ts
+export interface ServiceRegistryOptions {
+  readonly heartbeatTimeoutMs: number  // default: 30_000
+  readonly bus: EventBus
+}
+export class ServiceRegistry {
+  constructor(options: ServiceRegistryOptions)
+  register(serviceId: ServiceId, type: ServiceType): Service
+  deregister(serviceId: ServiceId): void
+  heartbeat(serviceId: ServiceId): void
+  checkForLostServices(nowMs: number): void
+  getById(serviceId: ServiceId): Service | undefined
+  listByType(type: ServiceType): Service[]
+  listAll(): Service[]
+}
 ```
-packages/agent-orchestration-hub/
-  src/
-    lib/                  ← domain library (no I/O)
-      registry/           ← Registry Context
-      dispatch/           ← Dispatch Context
-      task/               ← Task Context
-      execution/          ← Execution Context
-      gating/             ← Gating Context
-      events/             ← EventBus port interface + mitt adapter
-      monitoring/         ← Monitoring Context (CQRS read side)
-    server/               ← transport wrapper (stdio)
-  test/
-    unit/                 ← pure domain logic tests
-    integration/          ← server wrapper tests
-  package.json
-  tsconfig.json
+
+#### Tests to write
+
+`test/unit/registry/service-registry.test.ts` — 14 tests:
+```ts
+describe('ServiceRegistry', () => {
+  describe('register()', () => {
+    it('adds a service with status active')
+    it('emits ServiceRegistered with correct serviceId and type')
+    it('throws if the same serviceId is registered twice')
+  })
+  describe('deregister()', () => {
+    it('sets service status to disconnected')
+    it('emits ServiceDeregistered')
+    it('throws if serviceId is not found')
+  })
+  describe('heartbeat()', () => {
+    it('updates lastHeartbeatAt on the service')
+    it('throws if serviceId is not found')
+  })
+  describe('checkForLostServices()', () => {
+    it('emits ServiceLost for each service whose heartbeat has expired')
+    it('does not emit ServiceLost for services within the heartbeat window')
+    it('sets the lost service status to disconnected')
+    it('does not emit ServiceLost twice for the same already-disconnected service')
+  })
+  describe('getById()', () => {
+    it('returns the service when registered')
+    it('returns undefined when not registered')
+  })
+  describe('listByType()', () => {
+    it('returns only services of the requested type')
+    it('returns an empty array when no services of that type exist')
+  })
+})
 ```
 
----
+Use `InMemoryEventBus` in all tests — it's synchronous and has no runtime deps.
 
-#### Step 2: Write the implementation plan
+`test/unit/registry/service-id.test.ts` — 2 tests:
+```ts
+describe('createServiceId', () => {
+  it('returns a non-empty string')
+  it('returns unique values on successive calls')
+})
+```
 
-Create `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-impl-plan.md`.
+#### Definition of done
 
-The plan must cover:
+- `pnpm --filter @my-pi/agent-orchestration-hub typecheck` exits 0
+- `pnpm --filter @my-pi/agent-orchestration-hub test` reports **25 passing tests** (9 existing + 16 new)
+- No `any` on public `ServiceRegistry` method signatures
+- `ServiceRegistry` imports `EventBus` interface only — not `InMemoryEventBus` or `MittEventBus`
 
-1. **Package scaffold** — `package.json`, `tsconfig.json`, `vitest.config.ts`, `src/` skeleton
-2. **Event Bus** — `EventBus` port interface; mitt adapter; domain event base type
-3. **Registry Context** — `ServiceRegistry` aggregate, `Service` entity, `ServiceId`/`ServiceType`/`ServiceStatus` VOs, `ServiceRegistered`/`ServiceDeregistered`/`ServiceLost` events, heartbeat detection
-4. **Task Context** — `Task` aggregate, `Subtask` entity, all value objects, all domain events, invariants
-5. **Execution Context** — `Subagent` aggregate, `Assignment`, `Heartbeat`, all domain events
-6. **Gating Context** — `Gate` aggregate, `Condition` entity, `GatePolicy` (all_of for MVP), pre/post condition wiring, all domain events
-7. **Dispatch Context** — `DispatchRouter`, `RoutingRule` (regex → agent), `Prompt` VO, `PromptRouted` event
-8. **Monitoring Context** — `TaskSnapshot`, `GetTaskStatus`, `ListTasks` (CQRS read side, no aggregates)
-9. **Server wrapper (stdio)** — line-delimited JSON protocol, request routing to domain ops, serialization
-10. **End-to-end test** — spin up server, register agent, dispatch prompt, assert event stream + final task status
+#### What this task does NOT include
 
-Each task in the plan must include:
-- Which files to create/modify (with paths)
-- Key interfaces/types to define
-- Which domain events to wire up
-- Which tests to write (specific cases, not just "write tests")
-- Definition of done (typecheck clean, N tests pass)
-
-**Read before writing**:
-1. `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-design.md` — bounded contexts, invariants, domain events
-2. `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-mvp-grading.md` — what is Must Have vs deferred
-3. `docs/superpowers/specs/2026-06-23-agent-orchestration-hub-tech-stack.md` — package choices (mitt, nanoid, typebox, vitest, raw fs)
-
-**Key constraints for the implementation plan**:
-- Domain library (`lib/`) must be I/O-free and not import from `server/`
-- All cross-context communication goes through the `EventBus`; no direct aggregate-to-aggregate calls
-- File-based persistence is Nice to Have for MVP — in-memory is fine for initial implementation
-- HTTP transport is explicitly out of scope
-- LLM router agent is Won't Do for MVP
-- Gate policy: only `all_of` for MVP; `any_of` and `exactly_N` deferred
-- Human approval gates: Won't Do
+- Any subscribers to registry events — those come in later steps (Dispatch, Task contexts)
+- Persistence or snapshot of registry state — deferred
+- `draining` status transitions — `ServiceStatus.draining` exists but `ServiceRegistry` does not set it in Step 3
+- Anything in `src/lib/dispatch/`, `src/lib/task/`, etc.
 
 ---
 
@@ -156,6 +222,6 @@ Each task in the plan must include:
 | # | Item | Status |
 |---|---|---|
 | 1 | stdio protocol format — JSON-RPC 2.0 vs line-delimited JSON? | Open — resolve before Step 9 (server wrapper) |
-| 2 | Snapshot format — JSON vs YAML for state files? | Open — low priority; resolve before persistence task |
-| 3 | `onUpdate` forwarding in `executeParallel` → `executeSingle` | Open — enhancement only, not blocking |
+| 2 | Snapshot format — JSON vs YAML for state files? | Open — low priority; resolve before any persistence task |
+| 3 | `onUpdate` forwarding in `executeParallel` → `executeSingle` | Open — delegate enhancement only, not blocking hub work |
 | 4 | `agent: "default"` INVALID_PARAMS error message clarification | Open — doc/UX improvement, not blocking |

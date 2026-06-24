@@ -57,14 +57,14 @@ Create `~/.config/pi/pi-delegate/config.json` to customize behavior:
 {
   "maxDepth": 2,
   "piBinaryPath": "/usr/local/bin/pi",
-  "runTimeoutMs": 120000,
+  "runTimeoutMs": 600000,
   "maxInFlightChildren": 10,
   "sandboxCommand": "firejail",
   "childCwd": "/tmp/pi-delegate-work"
 }
 ```
 
-All fields are optional; the above are defaults. See `packages/pi-delegate/README.md` for details.
+All fields are optional. Fields with built-in defaults: `maxDepth` (2), `runTimeoutMs` (600000 = 10 min), `maxInFlightChildren` (no limit). Fields with no default: `piBinaryPath`, `sandboxCommand`, `childCwd` — omit these if you don't need them. See `packages/pi-delegate/README.md` for details.
 
 > **Note:** `piBinaryPath` is just an example. When left unset, the system PATH is searched automatically to find the `pi` binary.
 

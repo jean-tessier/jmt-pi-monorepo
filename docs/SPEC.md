@@ -633,8 +633,8 @@ Two levers, usable together:
   returned as captured from the `--mode json` stream.
 - **Run budget**: the implementation MAY enforce a per-run wall-clock timeout
   (`runTimeoutMs`, §11); on expiry the run result is `TIMEOUT` and the child is
-  terminated (§3.7). When unset, no timeout applies and the child runs to its own
-  loop completion.
+  terminated (§3.7). The default timeout is 600 000 ms (10 min); set to `0` to
+  disable and let the child run to its own loop completion.
 - **Temp files**: per-run inputs (`prompt.md`, and `schema.json` / `output.json`
   when an output schema applies) MUST be created mode `0600` inside a per-run
   temporary directory created mode `0700` (§3.5), placed **outside** the child's
@@ -654,7 +654,7 @@ SHOULD use them when the key is absent:
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `maxDepth` | integer ≥ 1 | `2` | Default depth ceiling (§7.1). |
-| `runTimeoutMs` | integer ≥ 0 | unset (no timeout) | Per-run wall-clock timeout (§10); `0` disables. |
+| `runTimeoutMs` | integer ≥ 0 | `600000` | Per-run wall-clock timeout (§10); `0` disables. Default is 10 min. |
 | `maxInFlightChildren` | integer ≥ 1 | unset (no limit) | Process-wide cap on simultaneous children across all `delegate` calls (§9). |
 | `piBinaryPath` | string | unset | Explicit path to the `pi` executable; overrides PATH resolution (§3.1). |
 | `sandboxCommand` | string | unset | Optional sandbox wrapper command (e.g. `"firejail --quiet"` or `"bwrap --ro-bind / /"`); the pi binary and args are passed as additional arguments to this command. |
