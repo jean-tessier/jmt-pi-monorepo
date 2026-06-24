@@ -263,5 +263,106 @@ describe('MonitoringProjection', () => {
       const completedTasks = projection.listTasks({ status: TaskStatus.completed })
       expect(completedTasks).toHaveLength(0)
     })
+
+    it('returns only tasks dispatched to the given serviceId', () => {
+      const bus = new InMemoryEventBus()
+      const projection = new MonitoringProjection(bus)
+
+      const task1 = makeTaskCreatedEvent()
+      const task2 = makeTaskCreatedEvent()
+      const task3 = makeTaskCreatedEvent()
+      bus.emit(task1)
+      bus.emit(task2)
+      bus.emit(task3)
+
+      const serviceA = createServiceId()
+      const serviceB = createServiceId()
+
+      const dispatched1: TaskDispatched = {
+        type: 'task.dispatched',
+        occurredAt: new Date(),
+        taskId: task1.taskId,
+        targetServiceId: serviceA,
+      }
+      const dispatched2: TaskDispatched = {
+        type: 'task.dispatched',
+        occurredAt: new Date(),
+        taskId: task2.taskId,
+        targetServiceId: serviceA,
+      }
+      const dispatched3: TaskDispatched = {
+        type: 'task.dispatched',
+        occurredAt: new Date(),
+        taskId: task3.taskId,
+        targetServiceId: serviceB,
+      }
+      bus.emit(dispatched1)
+      bus.emit(dispatched2)
+      bus.emit(dispatched3)
+
+      const tasksForServiceA = projection.listTasks({ serviceId: serviceA })
+      expect(tasksForServiceA).toHaveLength(2)
+      expect(tasksForServiceA.map(t => t.taskId)).toContain(task1.taskId)
+      expect(tasksForServiceA.map(t => t.taskId)).toContain(task2.taskId)
+    })
+
+    it('returns an empty array for an unknown serviceId', () => {
+      const bus = new InMemoryEventBus()
+      const projection = new MonitoringProjection(bus)
+      bus.emit(makeTaskCreatedEvent())
+
+      const unknownService = createServiceId()
+      const tasks = projection.listTasks({ serviceId: unknownService })
+      expect(tasks).toHaveLength(0)
+    })
+
+    it('applies both serviceId and status filters with AND semantics', () => {
+      const bus = new InMemoryEventBus()
+      const projection = new MonitoringProjection(bus)
+
+      const task1 = makeTaskCreatedEvent()
+      const task2 = makeTaskCreatedEvent()
+      bus.emit(task1)
+      bus.emit(task2)
+
+      const serviceA = createServiceId()
+
+      const dispatched1: TaskDispatched = {
+        type: 'task.dispatched',
+        occurredAt: new Date(),
+        taskId: task1.taskId,
+        targetServiceId: serviceA,
+      }
+      const dispatched2: TaskDispatched = {
+        type: 'task.dispatched',
+        occurredAt: new Date(),
+        taskId: task2.taskId,
+        targetServiceId: serviceA,
+      }
+      bus.emit(dispatched1)
+      bus.emit(dispatched2)
+
+      // Complete task1 only
+      const completed1: TaskCompleted = {
+        type: 'task.completed',
+        occurredAt: new Date(),
+        taskId: task1.taskId,
+      }
+      bus.emit(completed1)
+
+      // Filtering by serviceA AND completed should return only task1
+      const tasks = projection.listTasks({ serviceId: serviceA, status: TaskStatus.completed })
+      expect(tasks).toHaveLength(1)
+      expect(tasks[0].taskId).toBe(task1.taskId)
+    })
+
+    it('returns all tasks when no filter is provided (regression)', () => {
+      const bus = new InMemoryEventBus()
+      const projection = new MonitoringProjection(bus)
+      bus.emit(makeTaskCreatedEvent())
+      bus.emit(makeTaskCreatedEvent())
+      bus.emit(makeTaskCreatedEvent())
+      expect(projection.listTasks()).toHaveLength(3)
+    })
   })
 })

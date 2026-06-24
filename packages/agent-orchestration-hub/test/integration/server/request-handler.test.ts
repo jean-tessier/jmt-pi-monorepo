@@ -129,6 +129,31 @@ describe('RequestHandler', () => {
       expect(Array.isArray(result)).toBe(true)
       expect(result.length).toBeGreaterThanOrEqual(1)
     })
+
+    it('returns only tasks dispatched to a specific serviceId', () => {
+      const { hub, handler } = makeHandler()
+      const agentA = createServiceId()
+      const agentB = createServiceId()
+      hub.registry.register(agentA, 'agent' as import('../../../src/lib/registry/service-type.js').ServiceType)
+      hub.registry.register(agentB, 'agent' as import('../../../src/lib/registry/service-type.js').ServiceType)
+
+      // Route prompts starting with 'alpha' to agentA, everything else to agentB
+      handler.handle({ id: 'r1', method: 'add_routing_rule', params: { pattern: '^alpha', targetAgentId: agentA } })
+      handler.handle({ id: 'r2', method: 'add_routing_rule', params: { pattern: '.*', targetAgentId: agentB } })
+
+      handler.handle({ id: 'd1', method: 'dispatch_prompt', params: { text: 'alpha task one' } })
+      handler.handle({ id: 'd2', method: 'dispatch_prompt', params: { text: 'alpha task two' } })
+      handler.handle({ id: 'd3', method: 'dispatch_prompt', params: { text: 'beta task' } })
+
+      const response = handler.handle({
+        id: '99',
+        method: 'list_tasks',
+        params: { serviceId: agentA },
+      })
+      const result = (response as { id: string; result: unknown[] }).result
+      expect(Array.isArray(result)).toBe(true)
+      expect(result).toHaveLength(2)
+    })
   })
 
   describe('report_subtask_completed', () => {

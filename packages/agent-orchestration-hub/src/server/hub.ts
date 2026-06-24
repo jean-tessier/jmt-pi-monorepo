@@ -5,8 +5,9 @@ import type { ServiceLost } from '../lib/registry/registry-events.js'
 import { InMemoryTaskRepository } from '../lib/task/in-memory-task-repository.js'
 import type { TaskId } from '../lib/task/task-id.js'
 import { TaskStatus } from '../lib/task/task-status.js'
-import type { TaskDispatched } from '../lib/task/task-events.js'
+import type { TaskCompleted, TaskDispatched } from '../lib/task/task-events.js'
 import { InMemorySubagentRepository } from '../lib/execution/in-memory-subagent-repository.js'
+import type { SubagentTimeout } from '../lib/execution/execution-events.js'
 import { InMemoryGateRepository } from '../lib/gating/in-memory-gate-repository.js'
 import { GateService } from '../lib/gating/gate-service.js'
 import type { GateId } from '../lib/gating/gate-id.js'
@@ -99,6 +100,29 @@ export class Hub {
           const targetServiceId = this._taskServiceMap.get(task.taskId)
           if (targetServiceId) task.dispatch(targetServiceId)
         }
+      }
+    })
+
+    // task.completed → open post-condition gates
+    this.bus.on<TaskCompleted>('task.completed', (event) => {
+      const task = this.taskRepo.getById(event.taskId)
+      if (!task) return
+      for (const gateId of task.plan.postConditionGateIds) {
+        const gate = this.gateRepo.getById(gateId as GateId)
+        gate?.forceOpen()
+      }
+    })
+
+    // subagent.timeout → block the associated task
+    this.bus.on<SubagentTimeout>('subagent.timeout', (event) => {
+      if (!event.taskId) return
+      const task = this.taskRepo.getById(event.taskId)
+      if (
+        task &&
+        task.status !== TaskStatus.completed &&
+        task.status !== TaskStatus.failed
+      ) {
+        task.block('subagent timeout')
       }
     })
   }

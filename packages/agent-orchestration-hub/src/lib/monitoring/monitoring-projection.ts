@@ -19,6 +19,7 @@ import type {
 } from '../task/task-events.js'
 import { createSubtaskSequence } from '../task/subtask-sequence.js'
 import type { SubtaskSequence } from '../task/subtask-sequence.js'
+import type { ServiceId } from '../registry/service-id.js'
 import type { TaskFilter } from './event-filter.js'
 import type { TaskSnapshot } from './task-snapshot.js'
 
@@ -49,6 +50,7 @@ function computeProgressFromSnapshots(subtasks: MutableSubtaskSnapshot[]): Progr
 
 export class MonitoringProjection {
   private readonly snapshots = new Map<TaskId, MutableTaskSnapshot>()
+  private readonly _serviceTaskIndex = new Map<ServiceId, Set<TaskId>>()
 
   constructor(bus: EventBus) {
     this.handleTaskCreated = this.handleTaskCreated.bind(this)
@@ -78,9 +80,13 @@ export class MonitoringProjection {
   }
 
   listTasks(filter?: TaskFilter): readonly TaskSnapshot[] {
-    const all = Array.from(this.snapshots.values()) as TaskSnapshot[]
+    let all = Array.from(this.snapshots.values()) as TaskSnapshot[]
+    if (filter?.serviceId !== undefined) {
+      const ids = this._serviceTaskIndex.get(filter.serviceId) ?? new Set<TaskId>()
+      all = all.filter(s => ids.has(s.taskId))
+    }
     if (filter?.status !== undefined) {
-      return all.filter(s => s.status === filter.status)
+      all = all.filter(s => s.status === filter.status)
     }
     return all
   }
@@ -111,6 +117,9 @@ export class MonitoringProjection {
       snapshot.status = TaskStatus.dispatched
       snapshot.updatedAt = event.occurredAt
     }
+    const set = this._serviceTaskIndex.get(event.targetServiceId) ?? new Set<TaskId>()
+    set.add(event.taskId)
+    this._serviceTaskIndex.set(event.targetServiceId, set)
   }
 
   private handleTaskRunning(event: TaskRunning): void {

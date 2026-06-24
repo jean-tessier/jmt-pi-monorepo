@@ -75,11 +75,16 @@ export class RequestHandler {
         }
 
         case 'list_tasks': {
-          const filter =
-            request.params.status !== undefined
-              ? { status: request.params.status as TaskStatus }
-              : undefined
-          const tasks = this.hub.monitoring.listTasks(filter)
+          const hasStatus = request.params.status !== undefined
+          const hasServiceId = request.params.serviceId !== undefined
+          if (hasStatus || hasServiceId) {
+            const filter: { status?: TaskStatus; serviceId?: ServiceId } = {}
+            if (hasStatus) filter.status = request.params.status as TaskStatus
+            if (hasServiceId) filter.serviceId = request.params.serviceId as ServiceId
+            const tasks = this.hub.monitoring.listTasks(filter)
+            return { id: request.id, result: tasks }
+          }
+          const tasks = this.hub.monitoring.listTasks()
           return { id: request.id, result: tasks }
         }
 
