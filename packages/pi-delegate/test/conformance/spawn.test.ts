@@ -16,13 +16,12 @@
  *      exit (A3), SPAWN_FAILED on missing binary (A2/A4), and a labeled string on
  *      a malformed PI_DELEGATE_AGENTS env (A2).
  *
- * XFAIL NOTE: several assertions below describe the CORRECTED (post-T2.1) contract
- * that is not yet merged onto this branch. Those are marked with `it.fails(...)`
- * and an inline comment naming the finding. Under Vitest, `it.fails` PASSES while
- * the wrapped assertion still fails — so the suite stays green now. When T2.1 lands
- * the assertion starts holding, `it.fails` flips to RED, and the `.fails` marker
- * must be removed (converting it to a plain regression assertion). That flip is the
- * signal the fix is integrated.
+ * INTEGRATION NOTE (T4.1): the assertions below describe the CORRECTED (post-T2.1)
+ * contract — TIMEOUT (A1), ERROR on non-zero exit (A3), SPAWN_FAILED on a missing
+ * binary (A2/A4), a labeled string on a malformed PI_DELEGATE_AGENTS env (A2), and
+ * the removal of the --output-file flag (D2/X5). These were previously marked
+ * `it.fails(...)` while T2.1 was unmerged; now that T2.1 has landed they are plain,
+ * live regression assertions and must PASS.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -216,9 +215,10 @@ describe('buildSpawnArgs argv order (G1/D1)', () => {
   });
 
   // D2/X5: --output-file is NOT a real pi flag and must NOT appear in argv. T2.1
-  // removes it; this branch still pushes it when outputFile is set, so the
-  // assertion fails here and passes post-T2.1. Remove `.fails` once T2.1 lands.
-  it.fails('does NOT emit --output-file even when outputFile is set (D2/X5)', () => {
+  // removed it; buildSpawnArgs no longer pushes it even when outputFile is set —
+  // structured output is passed via the PI_OUTPUT_FILE env var instead. Live
+  // regression assertion now that T2.1 has landed.
+  it('does NOT emit --output-file even when outputFile is set (D2/X5)', () => {
     const { argv } = buildSpawnArgs(
       RESOLVED,
       makeContext({ outputFile: '/tmp/pi-delegate/task-abc/output.json' }),
@@ -333,9 +333,9 @@ describe('executeSingle never-throw contract', () => {
   });
 
   // A3: a non-zero child exit must surface as [BLOCKED:ERROR], not a success label.
-  // T2.1 adds the mapExitCode gate; this branch returns formatOkResult regardless,
-  // so the assertion fails here and passes post-T2.1. Remove `.fails` once T2.1 lands.
-  it.fails('maps a non-zero exit code to [BLOCKED:ERROR] (A3)', async () => {
+  // T2.1 added the mapExitCode gate in executeSingle, so a non-zero exit now yields
+  // a blocked string with a stderr summary. Live regression assertion (T2.1 landed).
+  it('maps a non-zero exit code to [BLOCKED:ERROR] (A3)', async () => {
     vi.mocked(spawnRun).mockResolvedValue({
       output: 'partial output',
       exitCode: 1,
@@ -348,79 +348,79 @@ describe('executeSingle never-throw contract', () => {
 
   // A2/A4: a missing binary (resolvePiBinary rejects) must surface as
   // [BLOCKED:SPAWN_FAILED] and never escape as a throw. T2.1 wraps resolvePiBinary
-  // in a try/catch inside executeSingle; this branch lets the rejection escape, so
-  // the call rejects rather than resolving a labeled string. Remove `.fails` post-T2.1.
-  it.fails('maps a missing binary to [BLOCKED:SPAWN_FAILED] without throwing (A2/A4)', async () => {
+  // in a try/catch inside executeSingle and maps the failure to SPAWN_FAILED, so the
+  // call resolves a labeled string instead of rejecting. Live assertion (T2.1 landed).
+  it('maps a missing binary to [BLOCKED:SPAWN_FAILED] without throwing (A2/A4)', async () => {
     vi.mocked(resolvePiBinary).mockRejectedValue(new Error('pi binary not found in PATH'));
     const out = await runDelegate(mock, { task: 'task needing binary' });
     expect(out.startsWith('[BLOCKED:SPAWN_FAILED]')).toBe(true);
   });
 
   // A2: a malformed PI_DELEGATE_AGENTS env must be caught and returned as a labeled
-  // blocked string, never thrown. T2.1 moves the JSON.parse under the never-throw
-  // guard; this branch parses it before any try/catch, so executeSingle throws.
-  // Remove `.fails` once T2.1 lands.
-  it.fails('returns a labeled blocked string on malformed PI_DELEGATE_AGENTS env (A2)', async () => {
+  // blocked string, never thrown. T2.1 moved the JSON.parse under the never-throw
+  // guard, so executeSingle resolves a labeled blocked string. Live assertion now.
+  it('returns a labeled blocked string on malformed PI_DELEGATE_AGENTS env (A2)', async () => {
     process.env.PI_DELEGATE_AGENTS = 'not-valid-json';
     const out = await runDelegate(mock, { task: 'task with bad env' });
     expect(out.startsWith('[BLOCKED:')).toBe(true);
   });
 });
 
-// ── spawn-pool semaphore (T2.1 — module may not exist on this branch yet) ─────
+// ── spawn-pool semaphore (B4/C4) ──────────────────────────────────────────────
+//
+// The canonical process-wide spawn pool (T2.2) exposes a class-based API:
+// configureSpawnPool / withSpawnSlot / Semaphore. spawnRun no longer acquires a
+// slot itself — the slot is acquired exactly once per child by the caller
+// (single mode: delegate-tool.ts execute(); parallel mode: parallel.ts). Here we
+// exercise the module directly to confirm it is wired and behaves: no cap is a
+// passthrough, and a configured cap bounds the global in-flight count FIFO.
 
-describe('spawn-pool semaphore (B4)', () => {
-  // The process-wide spawn pool ships with T2.1. It is not present on this branch
-  // yet, so we import it dynamically and skip the body when the module is absent.
-  // Once T2.1 lands, importing succeeds and these become live assertions.
-  it('acquireSpawnSlot is a no-op when uncapped, and bounds in-flight count when capped', async () => {
-    // The specifier is assembled at runtime so `tsc` does not statically resolve
-    // (and fail on) a module that only exists once T2.1 lands. `mod` is typed `any`
-    // for the same reason; the assertions below pin the real shape at runtime.
-    const spec = ['..', '..', 'src', 'parent', 'spawn-pool.js'].join('/');
-    let mod: any;
-    try {
-      mod = await import(/* @vite-ignore */ spec);
-    } catch {
-      // Module not present on this branch — T2.1 not merged. Treat as a known gap
-      // rather than a failure; the assertions below activate once T2.1 lands.
-      return;
-    }
+describe('spawn-pool semaphore (B4/C4)', () => {
+  it('is a passthrough when uncapped, and bounds in-flight count when capped', async () => {
+    const {
+      configureSpawnPool,
+      withSpawnSlot,
+      getConfiguredSpawnCap,
+      __resetSpawnPoolForTests,
+    } = await import('../../src/parent/spawn-pool.js');
 
-    const acquireSpawnSlot = mod.acquireSpawnSlot as (
-      n: number | undefined | null,
-    ) => Promise<() => void>;
-    const inFlightCount = mod.inFlightCount as (n: number | undefined | null) => number;
+    __resetSpawnPoolForTests();
 
-    // Uncapped: resolves immediately with a no-op release.
-    const releaseUncapped = await acquireSpawnSlot(undefined);
-    expect(typeof releaseUncapped).toBe('function');
-    expect(inFlightCount(undefined)).toBe(0);
-    releaseUncapped();
+    // Uncapped: no cap configured → straight passthrough, all run at once.
+    expect(getConfiguredSpawnCap()).toBeUndefined();
+    let current = 0;
+    let observedMax = 0;
+    const uncappedTask = async (): Promise<string> => {
+      current++;
+      observedMax = Math.max(observedMax, current);
+      await new Promise((r) => setTimeout(r, 5));
+      current--;
+      return 'ok';
+    };
+    await Promise.all(Array.from({ length: 4 }, () => withSpawnSlot(uncappedTask)));
+    expect(observedMax).toBe(4);
 
-    // Capped at 1: first acquire holds the only slot; second waits until released.
-    const limit = 1;
-    const r1 = await acquireSpawnSlot(limit);
-    expect(inFlightCount(limit)).toBe(1);
+    // Capped at 1: only one slot at a time, queued FIFO.
+    __resetSpawnPoolForTests();
+    configureSpawnPool(1);
+    expect(getConfiguredSpawnCap()).toBe(1);
 
-    let secondAcquired = false;
-    const p2 = acquireSpawnSlot(limit).then((release: () => void) => {
-      secondAcquired = true;
-      return release;
-    });
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((r) => { releaseFirst = r; });
 
-    // Give the microtask queue a turn; the second acquire must still be blocked.
+    let secondRan = false;
+    const held = withSpawnSlot(async () => { await gate; return 'held'; });
+    const queued = withSpawnSlot(async () => { secondRan = true; return 'queued'; });
+
+    // The single slot is held; the second call must still be blocked.
     await Promise.resolve();
-    expect(secondAcquired).toBe(false);
-    expect(inFlightCount(limit)).toBe(1);
+    expect(secondRan).toBe(false);
 
-    // Release the first slot; the queued waiter should now acquire.
-    r1();
-    const r2 = await p2;
-    expect(secondAcquired).toBe(true);
-    expect(inFlightCount(limit)).toBe(1);
+    // Release the held slot; the queued waiter now acquires and runs.
+    releaseFirst();
+    await Promise.all([held, queued]);
+    expect(secondRan).toBe(true);
 
-    r2();
-    expect(inFlightCount(limit)).toBe(0);
+    __resetSpawnPoolForTests();
   });
 });

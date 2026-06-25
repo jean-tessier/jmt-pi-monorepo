@@ -431,10 +431,12 @@ describe('executeParallel signal forwarding', () => {
     activate(mock.api);
     const tool = mock.tools[0];
 
-    // Pre-aborted signal makes the linkage synchronous and deterministic:
-    // executeSingle immediately aborts its AbortController when parentSignal.aborted === true.
+    // A LIVE (non-aborted) parent signal must thread all the way through
+    // executeParallel → runParallel → executeSingle → spawnRun, proving the
+    // parent cancellation channel reaches each child slot (AGENTS.md signal
+    // forwarding invariant). Using a live signal (not pre-aborted) so the spawn
+    // actually happens — see the next test for the pre-aborted short-circuit (B2).
     const abortController = new AbortController();
-    abortController.abort();
 
     await tool.execute(
       'call-signal-test',
@@ -444,11 +446,36 @@ describe('executeParallel signal forwarding', () => {
       {} as any,
     );
 
-    // spawnRun must have been called with an already-aborted signal,
-    // proving the parent abort propagated through executeParallel → executeSingle.
     expect(vi.mocked(spawnRun)).toHaveBeenCalledOnce();
     const callOptions = vi.mocked(spawnRun).mock.calls[0][3] as { signal?: AbortSignal };
-    expect(callOptions.signal?.aborted).toBe(true);
+    // The signal is forwarded (defined) and reflects the parent's (live) state.
+    expect(callOptions.signal).toBeDefined();
+    expect(callOptions.signal?.aborted).toBe(false);
+  });
+
+  it('short-circuits a pre-aborted parent signal without spawning a child (B2)', async () => {
+    activate(mock.api);
+    const tool = mock.tools[0];
+
+    // Pre-aborted parent signal: per finding B2, runParallel must NOT spawn a
+    // child only to immediately kill it — it short-circuits to a blocked result.
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await tool.execute(
+      'call-preaborted',
+      { parallel: [{ task: 'signal test task' }] },
+      abortController.signal,
+      undefined,
+      {} as any,
+    );
+
+    // No child was spawned (B2 short-circuit).
+    expect(vi.mocked(spawnRun)).not.toHaveBeenCalled();
+    // The result is a labeled blocked string (never-throw contract upheld).
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+    expect(text).toContain('[BLOCKED:ERROR]');
+    expect(text).toContain('cancelled before start');
   });
 });
 
@@ -522,22 +549,20 @@ describe('executeParallel onUpdate forwarding', () => {
 
 // ── Tests: Wave-2 corrected behavior (T3.1 additions) ─────────────────────────
 //
-// XFAIL NOTE: the B4 process-wide cap and the real failFast sibling-abort below
-// describe the CORRECTED (post-T2.2) parallel.ts behavior that is not yet merged
-// onto this branch. They are marked `it.fails(...)` so the suite stays green now;
-// under Vitest `it.fails` PASSES while its assertion fails. When T2.2 lands the
-// assertion starts holding, the test flips RED, and the `.fails` marker must be
-// removed (converting it to a live regression assertion). The G11 format test is
-// provable through the mock layer today and is a plain (non-`.fails`) assertion.
+// INTEGRATION NOTE (T4.1): the B4 process-wide cap and the real failFast
+// sibling-abort below describe the CORRECTED (post-T2.2) parallel.ts behavior.
+// They were `it.fails(...)` while T2.2 was unmerged; now that T2.2 has landed
+// (configureSpawnPool / withSpawnSlot wrapping each runOne slot, AbortSignal.any
+// composition, pre-spawn aborted-check) they are live regression assertions that
+// must PASS. The G11 format test was always a plain (non-`.fails`) assertion.
 
 // B4: a process-wide cap (config.maxInFlightChildren) must bound the TOTAL number
 // of live children across CONCURRENT runParallel calls — not just the siblings of
-// one call. T2.2 enforces this via the shared spawn-pool semaphore
-// (configureSpawnPool / withSpawnSlot). On this branch maxInFlightChildren is
-// folded into one call's per-call concurrency only, so two concurrent calls can
-// jointly exceed the cap. Remove `.fails` once T2.2 lands.
+// one call. T2.2 enforces this via the shared spawn-pool semaphore: runParallel
+// calls configureSpawnPool(maxInFlightChildren) and wraps each runOne slot with
+// withSpawnSlot, so two concurrent calls draw from one shared budget.
 describe('runParallel process-wide cap (B4)', () => {
-  it.fails('bounds combined in-flight children across two concurrent runParallel calls', async () => {
+  it('bounds combined in-flight children across two concurrent runParallel calls', async () => {
     let current = 0;
     let maxObserved = 0;
 
@@ -595,12 +620,11 @@ describe('runParallel process-wide cap (B4)', () => {
 // B1: with failFast, a failing task must abort its SIBLINGS via a signal that also
 // composes the PARENT signal. Concretely, after one task fails, later-scheduled
 // tasks must observe an aborted runSignal and short-circuit (status 'error',
-// "cancelled before start") instead of running their full body. T2.2 adds the
-// AbortSignal.any composition and the pre-spawn aborted-check. On this branch the
-// runSignal is forwarded but not inspected before running, so a later task still
-// executes its body. Remove `.fails` once T2.2 lands.
+// "cancelled before start") instead of running their full body. T2.2 added the
+// AbortSignal.any composition and the pre-spawn aborted-check, so a later sibling
+// is short-circuited without calling runOne. Live regression assertion (T2.2 landed).
 describe('runParallel failFast sibling-abort (B1)', () => {
-  it.fails('does not invoke runOne for siblings cancelled after the first failure under failFast', async () => {
+  it('does not invoke runOne for siblings cancelled after the first failure under failFast', async () => {
     const tasks: ParallelTask[] = [
       { task: 'fails-first', agent: 'a0' },
       { task: 'sibling-1', agent: 'a1' },

@@ -79,11 +79,12 @@ Children are spawned with these flags (in this order):
 (--system-prompt | --append-system-prompt) <text>
 --no-skills --no-context-files --no-session --no-extensions
 -e <parent-provider-path>      (one -e per provider)
-[--output-file <path>]
 <task>
 ```
 
 `-e` (singular) is used per provider. Do NOT use `--extensions` (plural).
+
+Structured output paths are passed via the `PI_OUTPUT_FILE` environment variable, not a `--output-file` CLI flag.
 
 ### Temp files
 

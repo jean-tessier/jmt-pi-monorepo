@@ -240,16 +240,16 @@ describe('delegate-provider extension', () => {
 
   // ── Capability gating (anti-regression for §Token gating) ─────────────────
 
-  it('registers tool+command+event when PI_DELEGATE_TOKEN is set', () => {
+  it('registers tool ONLY (no command, no event) when PI_DELEGATE_TOKEN is set', () => {
     process.env.PI_DELEGATE_TOKEN = 'valid-token-123';
     delegateProviderExtension(mock.api);
 
-    // Should forward to parent activate, which registers everything
+    // Should register the delegate tool only — not the /delegate command or
+    // the before_agent_start hook (those are parent-only side effects).
     expect(mock.tools.length).toBe(1);
     expect(mock.tools[0].name).toBe('delegate');
-    expect(mock.commands.length).toBe(1);
-    expect(mock.commands[0].name).toBe('delegate');
-    expect(mock.eventHandlers['before_agent_start']).toBeDefined();
+    expect(mock.commands.length).toBe(0);
+    expect(mock.eventHandlers['before_agent_start']).toBeUndefined();
   });
 
   it('does NOT register anything when PI_DELEGATE_TOKEN is empty', () => {
@@ -270,15 +270,14 @@ describe('delegate-provider extension', () => {
     expect(Object.keys(mock.eventHandlers).length).toBe(0);
   });
 
-  it('treats whitespace PI_DELEGATE_TOKEN as a valid (truthy) token and registers the extension', () => {
+  it('treats whitespace PI_DELEGATE_TOKEN as a valid (truthy) token and registers the tool', () => {
     process.env.PI_DELEGATE_TOKEN = '   ';
     delegateProviderExtension(mock.api);
 
-    // Whitespace is truthy, so the extension activates
+    // Whitespace is truthy, so the extension activates — tool only, no command
     expect(mock.tools.length).toBe(1);
     expect(mock.tools[0].name).toBe('delegate');
-    expect(mock.commands.length).toBe(1);
-    expect(mock.commands[0].name).toBe('delegate');
+    expect(mock.commands.length).toBe(0);
   });
 
   // ── Behavior equivalence with parent ─────────────────────────────────────
@@ -294,16 +293,12 @@ describe('delegate-provider extension', () => {
     expect(tool.description.length).toBeGreaterThan(0);
   });
 
-  it('when authorized, the before_agent_start handler appends capability note', async () => {
+  it('when authorized, does NOT register a before_agent_start handler (parent-only side effect)', () => {
     process.env.PI_DELEGATE_TOKEN = 'valid-token-789';
     delegateProviderExtension(mock.api);
 
-    const handler = mock.eventHandlers['before_agent_start'];
-    const event = createBeforeAgentStartEvent('Base prompt');
-
-    const result: BeforeAgentStartEventResult | undefined = await handler(event, {} as any);
-    expect(result).toBeDefined();
-    expect(result!.systemPrompt).toContain('Base prompt');
-    expect(result!.systemPrompt).toContain('`delegate` tool');
+    // The before_agent_start hook is a parent-only side effect and must NOT
+    // be registered in child processes.
+    expect(mock.eventHandlers['before_agent_start']).toBeUndefined();
   });
 });

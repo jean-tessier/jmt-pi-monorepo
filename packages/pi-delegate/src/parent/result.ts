@@ -12,6 +12,7 @@ export type ErrorCode =
   | 'TOOL_NOT_PERMITTED'
   | 'SCHEMA_INVALID'
   | 'TIMEOUT'
+  | 'SPAWN_FAILED'
   | 'ERROR';
 
 export function formatBlockedResult(code: ErrorCode, message: string, agentName: string): string {
