@@ -396,6 +396,17 @@ describe('runParallel', () => {
     expect(results[0].status).toBe('ok');
   });
 
+  it('clamps NaN concurrency to default (1+) so tasks still run', async () => {
+    // NaN propagates through Math.min/Math.max (IEEE 754), which would produce
+    // zero workers and silently hang before this fix. NaN must be treated as
+    // "use default (5)" so at least one worker starts.
+    const tasks: ParallelTask[] = [{ task: 'a' }, { task: 'b' }];
+    const results = await runParallel(tasks, { concurrency: NaN }, async (_t, idx) => `ok-${idx}`);
+    expect(results).toHaveLength(2);
+    expect(results[0].status).toBe('ok');
+    expect(results[1].status).toBe('ok');
+  });
+
   // ── Finding B1: parent signal still reaches children under failFast ─────────
 
   it('composes parent signal with failFast so parent cancel reaches runOne', async () => {

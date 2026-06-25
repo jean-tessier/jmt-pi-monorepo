@@ -85,9 +85,14 @@ export async function runParallel(
   // Finding B4/C4: maxInFlightChildren is NO LONGER folded in here — the global
   // in-flight cap is enforced process-wide by the spawn-pool semaphore around
   // each child spawn (see withSpawnSlot below), not by shrinking this number.
-  const requested = options.concurrency ?? 5;
+  // Guard against NaN/non-finite before clamping: NaN propagates through both
+  // Math.min and Math.max (IEEE 754), so a NaN concurrency would produce zero
+  // workers and silently hang. Treat NaN (or any non-finite value) as "use
+  // default (5)" before clamping.
+  const requested = options.concurrency;
+  const safe = (typeof requested === 'number' && isFinite(requested)) ? requested : 5;
   const ceiling = options.maxConcurrency ?? 10;
-  const effectiveConcurrency = Math.max(1, Math.min(requested, ceiling));
+  const effectiveConcurrency = Math.max(1, Math.min(safe, ceiling));
 
   // Pre-allocate results array so indices are stable regardless of completion order
   const results: ParallelResult[] = new Array(tasks.length);
