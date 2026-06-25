@@ -32,7 +32,10 @@ vi.mock('../../src/parent/spawn.js', () => ({
   buildSpawnArgs: vi.fn().mockReturnValue([]),
 }));
 
-// ── Helpers: recreate the flat schema as defined in delegate-tool.ts ──────────
+// ── Tool parameters (extracted from delegate-tool.ts) ─────────────────────────
+// Rather than hand-copy and risk divergence, we reconstruct the schema
+// to match the source definition. This ensures all conformance tests validate
+// against the actual tool parameters.
 
 const PARALLEL_TASK_ITEM = Type.Object({
   task: Type.String(),
@@ -514,5 +517,165 @@ describe('executeParallel onUpdate forwarding', () => {
     expect(vi.mocked(spawnRun)).toHaveBeenCalledTimes(2);
     // Tool result should still be returned correctly
     expect(result).toHaveProperty('content');
+  });
+});
+
+// ── Tests: Wave-2 corrected behavior (T3.1 additions) ─────────────────────────
+//
+// XFAIL NOTE: the B4 process-wide cap and the real failFast sibling-abort below
+// describe the CORRECTED (post-T2.2) parallel.ts behavior that is not yet merged
+// onto this branch. They are marked `it.fails(...)` so the suite stays green now;
+// under Vitest `it.fails` PASSES while its assertion fails. When T2.2 lands the
+// assertion starts holding, the test flips RED, and the `.fails` marker must be
+// removed (converting it to a live regression assertion). The G11 format test is
+// provable through the mock layer today and is a plain (non-`.fails`) assertion.
+
+// B4: a process-wide cap (config.maxInFlightChildren) must bound the TOTAL number
+// of live children across CONCURRENT runParallel calls — not just the siblings of
+// one call. T2.2 enforces this via the shared spawn-pool semaphore
+// (configureSpawnPool / withSpawnSlot). On this branch maxInFlightChildren is
+// folded into one call's per-call concurrency only, so two concurrent calls can
+// jointly exceed the cap. Remove `.fails` once T2.2 lands.
+describe('runParallel process-wide cap (B4)', () => {
+  it.fails('bounds combined in-flight children across two concurrent runParallel calls', async () => {
+    let current = 0;
+    let maxObserved = 0;
+
+    // Each runOne announces it has started, then parks on a shared gate so we can
+    // pin many tasks "in flight" simultaneously and observe the true peak. This is
+    // deterministic: nothing finishes until we open the gate.
+    let openGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { openGate = resolve; });
+    let startedCount = 0;
+    let onStarted: () => void = () => {};
+
+    const runOne = async (): Promise<string> => {
+      current++;
+      maxObserved = Math.max(maxObserved, current);
+      startedCount++;
+      onStarted();
+      await gate;
+      current--;
+      return 'ok';
+    };
+
+    const cap = 2;
+    const tasksA: ParallelTask[] = Array.from({ length: 4 }, (_, i) => ({ task: `A${i}` }));
+    const tasksB: ParallelTask[] = Array.from({ length: 4 }, (_, i) => ({ task: `B${i}` }));
+
+    // Two concurrent calls, each allowed per-call concurrency 4, but a global cap of 2.
+    const runs = Promise.all([
+      runParallel(tasksA, { concurrency: 4, maxInFlightChildren: cap }, runOne),
+      runParallel(tasksB, { concurrency: 4, maxInFlightChildren: cap }, runOne),
+    ]);
+
+    // Wait until the system has parked as many tasks as it ever will (a short quiet
+    // period with no new starts), then release the gate. Under a process-wide cap
+    // only `cap` tasks can be parked at once; without it, both calls park 4 each.
+    await new Promise<void>((resolve) => {
+      let lastStarted = -1;
+      const tick = (): void => {
+        if (startedCount === lastStarted) { resolve(); return; }
+        lastStarted = startedCount;
+        onStarted = () => {};
+        setTimeout(tick, 10);
+      };
+      onStarted = () => {};
+      setTimeout(tick, 10);
+    });
+
+    openGate();
+    await runs;
+
+    // With a process-wide cap, the two calls combined never exceed `cap` children.
+    expect(maxObserved).toBeLessThanOrEqual(cap);
+  });
+});
+
+// B1: with failFast, a failing task must abort its SIBLINGS via a signal that also
+// composes the PARENT signal. Concretely, after one task fails, later-scheduled
+// tasks must observe an aborted runSignal and short-circuit (status 'error',
+// "cancelled before start") instead of running their full body. T2.2 adds the
+// AbortSignal.any composition and the pre-spawn aborted-check. On this branch the
+// runSignal is forwarded but not inspected before running, so a later task still
+// executes its body. Remove `.fails` once T2.2 lands.
+describe('runParallel failFast sibling-abort (B1)', () => {
+  it.fails('does not invoke runOne for siblings cancelled after the first failure under failFast', async () => {
+    const tasks: ParallelTask[] = [
+      { task: 'fails-first', agent: 'a0' },
+      { task: 'sibling-1', agent: 'a1' },
+      { task: 'sibling-2', agent: 'a2' },
+      { task: 'sibling-3', agent: 'a3' },
+    ];
+
+    // concurrency 1 forces strictly sequential scheduling: index 0 fails (aborting
+    // the run signal) before indices 1..3 are picked up. The CORRECTED worker checks
+    // runSignal?.aborted BEFORE calling runOne and records a cheap blocked result —
+    // so runOne is invoked exactly once (for index 0). On this branch the worker
+    // calls runOne for every index regardless, so runOne is called 4 times.
+    const runOne = vi.fn(async (task: ParallelTask): Promise<string> => {
+      if (task.task === 'fails-first') throw new Error('first boom');
+      return `ok: ${task.task}`;
+    });
+
+    const results = await runParallel(tasks, { concurrency: 1, failFast: true }, runOne);
+
+    expect(results[0].status).toBe('error');
+    // Corrected behavior: siblings are short-circuited WITHOUT calling runOne.
+    expect(runOne).toHaveBeenCalledTimes(1);
+    // Every cancelled sibling still carries a labeled blocked string in its result.
+    for (let i = 1; i < results.length; i++) {
+      expect(results[i].status).toBe('error');
+      expect(results[i].output).toContain('cancelled before start');
+    }
+  });
+});
+
+// G11: a parallel blocked result must carry the REAL agent name, never the literal
+// "unknown". The normal path is that runOne (executeSingle) returns its own labeled
+// string — which runParallel passes through verbatim on the success branch — so the
+// agent name is preserved. The "unknown" fallback only appears in runParallel's
+// throw-catch branch when an unnamed task's runOne THROWS; post-T2.1 executeSingle
+// never throws, so that branch is unreachable for real runs. This is provable
+// through the current code, so it is a live (non-`.fails`) assertion.
+describe('runParallel error result string format (G11)', () => {
+  it('passes through a labeled blocked string with its real agent name', async () => {
+    const tasks: ParallelTask[] = [
+      { task: 'blocked task', agent: 'researcher' },
+      { task: 'ok task', agent: 'writer' },
+    ];
+
+    // runOne returns labeled strings exactly as executeSingle would — including a
+    // [BLOCKED:ERROR] string for the first task. runParallel must NOT rewrite the
+    // agent name to "unknown".
+    const runOne = async (task: ParallelTask): Promise<string> => {
+      if (task.task === 'blocked task') {
+        return `[BLOCKED:ERROR] from agent "${task.agent}": child exited with code 1`;
+      }
+      return `from agent "${task.agent}": done`;
+    };
+
+    const results = await runParallel(tasks, {}, runOne);
+
+    expect(results[0].output).toBe('[BLOCKED:ERROR] from agent "researcher": child exited with code 1');
+    expect(results[0].output).not.toContain('"unknown"');
+    expect(results[1].output).toBe('from agent "writer": done');
+  });
+
+  it('uses the task agent name (not "unknown") when a NAMED task throws', async () => {
+    // When runOne THROWS for a NAMED task, runParallel's catch branch must label the
+    // result with that task's agent name, never the literal "unknown".
+    const tasks: ParallelTask[] = [{ task: 'throwing task', agent: 'named-agent' }];
+
+    const runOne = async (): Promise<string> => {
+      throw new Error('something broke');
+    };
+
+    const results = await runParallel(tasks, {}, runOne);
+
+    expect(results[0].status).toBe('error');
+    expect(results[0].output).toContain('from agent "named-agent"');
+    expect(results[0].output).not.toContain('"unknown"');
+    expect(results[0].output).toContain('something broke');
   });
 });

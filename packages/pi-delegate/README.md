@@ -8,7 +8,7 @@
 
 1. **Single delegation** — the `delegate` tool spawns one child agent for a focused task; the parent receives the result and incorporates it into the conversation.
 
-2. **Parallel fan-out** — delegate to multiple children concurrently with configurable `concurrency` and `maxConcurrency` limits; results return as an ordered array of `{ index, output, status }` objects, and `failFast` lets you abort early if one task fails.
+2. **Parallel fan-out** — delegate to multiple children concurrently with a configurable `concurrency` limit; results return as a joined labeled string (one `from agent "..."` block per task, separated by blank lines), and `failFast` lets you abort early if one task fails.
 
 3. **Typed output** — supply an `outputSchema` (JSON Schema) to enforce a strict contract on the child's response; the child returns a validated object, not freeform text. The schema is compiled with TypeBox for validation.
 
@@ -26,18 +26,17 @@ node install.mjs
 
 This copies the extension into `~/.config/pi/extensions/pi-delegate/`.
 
-Then add the extensions to your Pi config (`~/.config/pi/pi.yaml`):
+The install script automatically registers the extensions by adding them to `~/.config/pi/settings.json` (JSON, not YAML). You should see output like:
 
-```yaml
-extensions:
-  - ~/.config/pi/extensions/pi-delegate/src/parent/index.ts
-  - ~/.config/pi/extensions/pi-delegate/src/delegate-provider/index.ts
+```
+✓ Installed pi-delegate → /Users/you/.config/pi/extensions/pi-delegate
+✓ Updated /Users/you/.config/pi/settings.json
 ```
 
 Verify the install:
 
 ```bash
-pi doctor
+/delegate doctor
 ```
 
 ## Configuration
@@ -96,6 +95,8 @@ Each agent file is a Markdown file with YAML frontmatter. Only the following fro
 | `outputSchema` | object | JSON Schema for structured output validation |
 | `maxDepth` | number | Per-agent depth cap (overrides config, resolved via `min`) |
 
+The **Markdown body** (content after the closing `---`) becomes the child's system prompt (`systemPrompt` in the parsed definition). It is not a frontmatter key.
+
 API:
 
 - `findAgent(name)` → `Promise<AgentDefinition | undefined>`
@@ -136,7 +137,6 @@ const DEFAULT_AGENT = {
       { "task": "Extract the top 5 financial metrics", "agent": "analyst" }
     ],
     "concurrency": 5,
-    "maxConcurrency": 10,
     "failFast": false
   }
 }
@@ -261,21 +261,36 @@ Note: `-e` (singular) is used per provider, not `--extensions` (plural).
 
 ### Parallel task parameter schemas
 
-Both `SINGLE_TASK_PARAMS` and `PARALLEL_TASK_PARAMS` use `additionalProperties: false`. The `tools` field in `PARALLEL_TASK_ITEM` accepts a union type: `Type.Union([Type.Array(Type.String()), Type.String()])`.
+`DELEGATE_TOOL_PARAMS` uses `additionalProperties: false`; `PARALLEL_TASK_ITEM` does not. The `tools` field in `PARALLEL_TASK_ITEM` accepts a union type: `Type.Union([Type.Array(Type.String()), Type.String()])`.
 
 ### Parallel defaults
 
 | Parameter | Default |
 |-----------|---------|
 | `concurrency` | `5` |
-| `maxConcurrency` | `10` |
-| Return type | `{ index, output, status }[]` |
+| Return type | joined labeled string (one `from agent "..."` block per task, separated by `\n\n`) |
 
 ### Depth resolution
 
 `resolveMaxDepth(configMaxDepth, agentMaxDepth)` returns:
 - `agentMaxDepth` if defined (i.e., `min(configMaxDepth, agentMaxDepth)`)
 - `configMaxDepth` otherwise
+
+## Distribution and dependency notes
+
+### TypeScript source via jiti
+
+The `exports` field in `package.json` points directly at `.ts` source files (e.g. `./src/parent/index.ts`) rather than compiled JavaScript. This works because pi uses [jiti](https://github.com/unjs/jiti) to load extensions at runtime — jiti transpiles TypeScript on the fly, so no build step is required.
+
+As a consequence:
+
+- **At runtime**, the TypeScript source is loaded by pi's own jiti instance, and type imports like `typebox` resolve through pi's own `node_modules` (which bundles `typebox@1.1.38`).
+- **For type-checking and tests** (local `pnpm test` / `pnpm typecheck`), the workspace-local `typebox` devDependency is used. It is pinned to `~1.1` to match the version pi bundles, avoiding API drift between dev-time types and runtime behavior.
+- There is no `build` script and no `dist/` directory. If you need a pre-built copy, compile with `tsc` against the `tsconfig.json`.
+
+### pi version alignment
+
+The peer dependency for `@earendil-works/pi-coding-agent` is set to `^0.79.0`. The `pi` CLI binary is provided by that package. There is no dependency on the separate `pi` npm package (an unrelated "PI number" utility).
 
 ## vs pi-subagents (built-in)
 

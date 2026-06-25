@@ -44,10 +44,10 @@ extensions:
 Verify installation:
 
 ```bash
-pi doctor
+/delegate doctor
 ```
 
-You should see `pi-delegate` and `pi-structured-output` listed in available tools and extensions.
+You should see binary resolution, config validity, provider files, and timeout — all passing.
 
 ### Step 0c: (Optional) Configure pi-delegate
 
@@ -107,7 +107,7 @@ The frontmatter keys:
 Save and reload Pi. Verify it's discoverable:
 
 ```bash
-/delegate doctor  # Shows summarizer in the list
+/delegate doctor  # Reports binary/config/providers/timeout
 ```
 
 ### Step 2: Single delegation
@@ -262,7 +262,7 @@ Now:
 If the `researcher` agent tries to delegate at depth 3, it will get:
 
 ```
-[BLOCKED:DEPTH_BLOCKED] from agent "researcher": Depth 3 exceeds maxDepth (3); cannot delegate
+[BLOCKED:DEPTH_BLOCKED] from agent "researcher": Delegation depth 3 reached maxDepth 3
 ```
 
 It's up to the child agent to handle this and pivot to a direct solution.
@@ -282,7 +282,7 @@ Set `maxDepth: 1` in the config:
 Now your root agent can call `delegate`, but any child agent that tries to call `delegate` will be blocked:
 
 ```
-[BLOCKED:DEPTH_BLOCKED] from agent "researcher": Depth 3 exceeds maxDepth (3); cannot delegate
+[BLOCKED:DEPTH_BLOCKED] from agent "researcher": Delegation depth 1 reached maxDepth 1
 ```
 
 This is how you create **leaf agents** — agents that can do work but not spawn further children.
@@ -315,10 +315,10 @@ I can delegate to myself.
 }
 ```
 
-The root agent calls `loop-test` at depth 1. Inside `loop-test`, the agent tries to call `delegate` with agent `loop-test` again. The lineage path is `[root] → [loop-test]`, and `loop-test` is already in it, so:
+The root agent calls `loop-test` at depth 1. Inside `loop-test`, the agent tries to call `delegate` with agent `loop-test` again. The lineage path is `loop-test` (colon-separated), and `loop-test` is already in it, so:
 
 ```
-[BLOCKED:CYCLE_DETECTED] from agent "loop-test": Cycle detected: agent "loop-test" already in path [root→loop-test]
+[BLOCKED:CYCLE_DETECTED] from agent "loop-test": Cycle detected: agent "loop-test" already in path [loop-test]
 ```
 
 The cycle block fires *before* the spawn, preventing runaway recursion.
@@ -330,6 +330,6 @@ The cycle block fires *before* the spawn, preventing runaway recursion.
 - **Configuration**: Tune `maxDepth`, `runTimeoutMs`, and `sandboxCommand` in `~/.config/pi/pi-delegate/config.json`.
 - **Agent discovery**: Check `~/.config/pi/agents/` and `./.pi/agents/` (project scope) for agent definitions.
 - **Error handling**: Inspect the `error` object (code + message) in blocked or failed results.
-- **Monitoring**: Run `pi doctor` to verify installation and see available agents.
+- **Monitoring**: Run `/delegate doctor` to verify installation (binary, config, providers, timeout).
 
 For the full spec, see `/docs/SPEC.md` in the repo.

@@ -18,7 +18,7 @@ src/
     types.ts, lineage.ts, schema.ts
 ```
 
-**The two extension entry points (`parent/index.ts` and `delegate-provider/index.ts`) are registered separately and must not import each other.** `src/parent/` must never import from `src/delegate-provider/` and vice versa. Only `src/shared/` is fair game from both sides.
+**The two extension entry points (`parent/index.ts` and `delegate-provider/index.ts`) are registered separately and must not ES-module-import each other.** `src/parent/` must never `import` from `src/delegate-provider/` and vice versa. Only `src/shared/` is fair game from both sides. Note: `delegate-tool.ts` does reference `../delegate-provider/index.ts` as a *file path string* (via `import.meta.url`) for passing to the child's `-e` CLI flag — this is path resolution, not a module import, and does not violate the invariant.
 
 ---
 
@@ -99,8 +99,8 @@ The `AbortSignal` from the tool's `execute()` call **must be threaded through to
 
 - Tool `parameters` must be a flat `Type.Object(...)` at the root — no `anyOf`, no wrapping. See root `AGENTS.md` and the fix in commit `fce5be0`.
 - Optional fields use `Type.Optional(Type.String())` etc. — do not use `Type.Union([..., Type.Undefined()])`.
-- `additionalProperties: false` on `DELEGATE_TOOL_PARAMS` and `PARALLEL_TASK_ITEM` — preserve this.
-- `Type.Enum` in tool schemas generates `anyOf/const` patterns that Pi rejects. Use the `StringEnum` helper from `@earendil-works/pi-ai` if enum types are ever needed.
+- `additionalProperties: false` is on `DELEGATE_TOOL_PARAMS` only — `PARALLEL_TASK_ITEM` does not carry it. Preserve this distinction.
+- `Type.Enum` in tool schemas generates `anyOf/const` patterns that Pi rejects. Use the `StringEnum` helper from `@earendil-works/pi-ai` if enum types are ever needed. Note: `@earendil-works/pi-ai` is a transitive dependency (not declared directly in `package.json`), available through `@earendil-works/pi-coding-agent`.
 
 ---
 

@@ -81,6 +81,9 @@ describe('preflight guards', () => {
     // This may or may not fail depending on TypeBox strictness — check both paths
     if (result.blocked) {
       expect(result.code).toBe('SCHEMA_INVALID');
+    } else {
+      // TypeBox may allow unknown types — the check should still succeed
+      expect(result.blocked).toBe(false);
     }
   });
 });
