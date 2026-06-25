@@ -3,6 +3,10 @@
 > Captured by T3.3 (Wave 3). These decisions were made by the Orchestrator to resolve
 > ambiguities identified during the MASTER-REVIEW and encoded in the RESOLUTION-PLAN.
 > T4.2 must propagate each decision into `docs/SPEC.md`.
+>
+> **Ratification:** All four decisions below were **ratified as-is by Jean M Tessier on
+> 2026-06-25** for the 0.1.0 release. They are implemented and reflected in `docs/SPEC.md`;
+> none re-opens as feature work.
 
 ---
 
@@ -13,6 +17,8 @@ user-level config layers). The implementation (`src/parent/config.ts`) does not 
 these layers.
 
 **Option chosen:** NARROW SPEC
+
+**Status:** ✅ Ratified as-is (Jean M Tessier, 2026-06-25). Broader project/user config layers remain deferred post-0.1.0.
 
 **Rationale:** Adding model/tools/prompt config layers is new feature work with non-trivial
 design surface (merge semantics, per-agent overrides, env interaction). The existing
@@ -46,6 +52,8 @@ deduplicated before use.
 
 **Option chosen:** DOWNGRADE SPEC MUST to SHOULD
 
+**Status:** ✅ Ratified as-is (Jean M Tessier, 2026-06-25). Tools trim/dedup stays caller responsibility for 0.1.0.
+
 **Rationale:** The implementation gap is low-risk — trim/dedup is caller responsibility and
 no bug has been filed for malformed input. Implementing trim/dedup in the library would be
 a defensive measure, not a correctness fix for any known failure mode. Downgrading to
@@ -77,6 +85,8 @@ undocumented choice (X7 in MASTER-REVIEW).
 
 **Option chosen:** DOCUMENT AS INTENTIONAL (TS-source-via-jiti)
 
+**Status:** ✅ Ratified as-is (Jean M Tessier, 2026-06-25). No `dist/` build step for 0.1.0.
+
 **Rationale:** T1.4 already documented this decision in `README.md`. The choice trades
 a build step for simplicity at the cost of a runtime dependency on `jiti`. This is
 appropriate for 0.1.0 where the toolchain is still being established.
@@ -95,6 +105,8 @@ already exited). The question was whether `spawnRun` should resolve with a `time
 flag or propagate a thrown exception for callers to catch.
 
 **Option chosen:** RESOLVE WITH `timedOut` FLAG
+
+**Status:** ✅ Ratified as-is (Jean M Tessier, 2026-06-25). Implemented in T2.1; consistent with the never-throw contract.
 
 **Rationale:** Resolves-with-timedOut keeps `spawnRun` consistent with the never-throw
 contract (a core invariant of pi-delegate). Callers that want to distinguish timeout from
@@ -116,9 +128,11 @@ to a `[BLOCKED:TIMEOUT]` result. This was implemented in T2.1.
 
 ## Summary for T4.2
 
-| Decision | Finding | Chosen option | SPEC change needed |
-|---|---|---|---|
-| F1 / C5 | Config governs model/tools/prompt (SPEC §8) | Narrow SPEC | Remove model/tools/prompt from config scope; note deferred |
-| F2 / D11 | Tools MUST be trim/deduped (SPEC §8.2) | Downgrade to SHOULD | Change MUST → SHOULD; note caller responsibility |
-| E2 | Distribution model undocumented | Document TS-via-jiti | Check §1/§2 for compiled-dist assumptions; README already updated |
-| A1 | Timeout contract shape | Resolve with `timedOut` flag | Confirm spawn section matches resolved-value shape |
+All four decisions are **ratified as-is (Jean M Tessier, 2026-06-25)** and already propagated into `docs/SPEC.md`.
+
+| Decision | Finding | Chosen option | SPEC change needed | Ratified |
+|---|---|---|---|---|
+| F1 / C5 | Config governs model/tools/prompt (SPEC §8) | Narrow SPEC | Remove model/tools/prompt from config scope; note deferred | ✅ 2026-06-25 |
+| F2 / D11 | Tools MUST be trim/deduped (SPEC §8.2) | Downgrade to SHOULD | Change MUST → SHOULD; note caller responsibility | ✅ 2026-06-25 |
+| E2 | Distribution model undocumented | Document TS-via-jiti | Check §1/§2 for compiled-dist assumptions; README already updated | ✅ 2026-06-25 |
+| A1 | Timeout contract shape | Resolve with `timedOut` flag | Confirm spawn section matches resolved-value shape | ✅ 2026-06-25 |
