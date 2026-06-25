@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // install.mjs — Copy pi-delegate and pi-structured-output to Pi's extension directory
-import { cp as realCp, mkdir as realMkdir, readFile as realReadFile, writeFile as realWriteFile } from 'fs/promises';
+import { cp as realCp, mkdir as realMkdir, readFile as realReadFile, writeFile as realWriteFile, rm as realRm } from 'fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -23,7 +23,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
  * @param {string}   [options.piExtDir]    - Pi extensions directory
  */
 export async function install({
-  fs = { cp: realCp, mkdir: realMkdir, readFile: realReadFile, writeFile: realWriteFile },
+  fs = { cp: realCp, mkdir: realMkdir, readFile: realReadFile, writeFile: realWriteFile, rm: realRm },
   exec = (cmd, args, opts) => execFilePromise(cmd, args, opts),
   pkgs = ['pi-delegate', 'pi-structured-output'],
   srcDir = __dirname,
