@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
@@ -13,6 +14,7 @@ import { randomBytes } from 'crypto';
 import type { DelegateConfig, RunStatus } from '../shared/types.js';
 import type { ResolvedParams } from './resolve.js';
 import type { TempRunFiles } from './tempfiles.js';
+import { acquireSpawnSlot } from './spawn-pool.js';
 
 // ── Binary resolution ─────────────────────────────────────────────────────────
 
@@ -158,10 +160,6 @@ export function buildSpawnArgs(
   argv.push('--no-context-files');
   argv.push('--no-session');
 
-  if (context.outputFile) {
-    argv.push('--output-file', context.outputFile);
-  }
-
   // SPEC §3.4: --no-extensions baseline before any -e (child loads ONLY specified providers)
   argv.push('--no-extensions');
   if (context.extensionPaths && context.extensionPaths.length > 0) {
@@ -169,6 +167,12 @@ export function buildSpawnArgs(
       argv.push('-e', ep);
     }
   }
+
+  // D2/X5: --output-file is NOT a real pi flag — pi ignores it. Structured output
+  // is wired entirely through the PI_OUTPUT_FILE env var (set below). Emitting the
+  // flag was dead weight, so it is intentionally not pushed here. The documented
+  // flag order is: ...--no-extensions, -e <provider>..., [--output-file], <task>;
+  // with --output-file removed the task remains the final positional argument.
 
   // SPEC §3.2: task string MUST be passed as positional argument, never interpolated into a flag
   argv.push(context.task);
@@ -274,8 +278,17 @@ export interface RunOptions {
   signal?: AbortSignal;
   onUpdate?: (event: { type: string; agent?: string; tool?: string }) => void;
   runTimeoutMs?: number;
-  sandboxCommand?: string;  // optional sandbox wrapper
-  childCwd?: string;        // child working directory
+  sandboxCommand?: string;      // optional sandbox wrapper
+  childCwd?: string;            // child working directory override
+  maxInFlightChildren?: number; // B4: global cap on concurrent children (undefined = no cap)
+}
+
+/** Resolved value of spawnRun(). spawnRun never rejects on timeout (A1). */
+export interface SpawnRunResult {
+  output: string;     // captured assistant text (may be empty)
+  exitCode: number;   // child exit code; -1 when timed out or unavailable
+  timedOut?: boolean; // true only when the run hit runTimeoutMs (A1)
+  stderr?: string;    // accumulated child stderr, used for A3 error summaries
 }
 
 /**
@@ -284,8 +297,10 @@ export interface RunOptions {
  *
  * - stdout is parsed line-by-line via readline (handles partial-line buffering)
  * - stderr is accumulated but never causes rejection
- * - Timeout: SIGTERM → SIGKILL after 5s; rejects with { timedOut: true }
+ * - Timeout: SIGTERM → SIGKILL after 5s; RESOLVES with { output: '', exitCode: -1, timedOut: true } (A1)
  * - Abort signal: SIGTERM → SIGKILL after 5s; resolves with captured output so far
+ * - Spawn failures (e.g. binary not found) reject with an Error; the caller maps that to a labeled string
+ * - A global spawn slot is acquired via spawn-pool when config.maxInFlightChildren is set (B4)
  * - TempRunFiles.cleanup() is NOT called here — that's the caller's responsibility (Task 8)
  */
 export async function spawnRun(
@@ -293,166 +308,200 @@ export async function spawnRun(
   args: SpawnArgs,
   tempFiles: TempRunFiles,
   options: RunOptions,
-): Promise<{ output: string; exitCode: number; timedOut?: boolean }> {
-  return new Promise((resolve, reject) => {
-    // Apply sandbox wrapping if configured
-    const [actualBinary, actualArgs] = wrapWithSandbox(binaryPath, args.argv, options.sandboxCommand);
+): Promise<SpawnRunResult> {
+  // B4: acquire a process-wide spawn slot before launching the child. With no
+  // configured cap this resolves immediately; otherwise it blocks until a slot
+  // frees up, bounding the total number of live `pi` children across the process.
+  const releaseSlot = await acquireSpawnSlot(options.maxInFlightChildren);
 
-    // Determine child working directory: use override if set, otherwise temp run dir
-    const childCwd = options.childCwd ?? tempFiles.dir;
+  // C1: Determine the child's working directory.
+  // When an explicit childCwd is configured, honour it. Otherwise the child must
+  // NOT sit in tempFiles.dir — that directory holds prompt.md / output.json /
+  // schema.json, and a bash-capable child could read the prompt or clobber the
+  // output. Instead, spawn the child in an empty `work/` subdir so the I/O files
+  // stay in tempFiles.dir, out of the child's working directory. The subdir lives
+  // inside tempFiles.dir so the caller's tempFiles.cleanup() still removes it.
+  let childCwd: string;
+  if (options.childCwd) {
+    childCwd = options.childCwd;
+  } else {
+    childCwd = path.join(tempFiles.dir, 'work');
+    try {
+      await fs.mkdir(childCwd, { mode: 0o700, recursive: true });
+    } catch {
+      // If the isolated work dir cannot be created, fall back to the OS temp root
+      // rather than tempFiles.dir, so we never expose the I/O files to the child.
+      childCwd = os.tmpdir();
+    }
+  }
 
-    // Spawn the child process with isolated cwd
-    const child = spawn(actualBinary, actualArgs, {
-      env: args.env,
-      cwd: childCwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  try {
+    return await new Promise<SpawnRunResult>((resolve, reject) => {
+      // Apply sandbox wrapping if configured
+      const [actualBinary, actualArgs] = wrapWithSandbox(binaryPath, args.argv, options.sandboxCommand);
 
-    let output = '';
-    let agentEndResult = '';
-    let stderrBuffer = '';
-    let timedOut = false;
-    let settled = false;
+      // Spawn the child process with the isolated cwd determined above
+      const child = spawn(actualBinary, actualArgs, {
+        env: args.env,
+        cwd: childCwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
-    // ── stdout: line-by-line JSON event parsing ───────────────────────────────
-    const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+      let output = '';
+      let agentEndResult = '';
+      let stderrBuffer = '';
+      let timedOut = false;
+      let settled = false;
 
-    rl.on('line', (line) => {
-      if (!line.trim()) return; // skip empty lines
+      // ── stdout: line-by-line JSON event parsing ───────────────────────────────
+      const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
 
-      let event: AgentEvent;
-      try {
-        event = JSON.parse(line) as AgentEvent;
-      } catch {
-        // Not valid JSON — skip; could log if DEBUG is set
-        if (process.env.DEBUG) {
-          process.stderr.write(`[pi-delegate] Non-JSON stdout line: ${line}\n`);
+      rl.on('line', (line) => {
+        if (!line.trim()) return; // skip empty lines
+
+        let event: AgentEvent;
+        try {
+          event = JSON.parse(line) as AgentEvent;
+        } catch {
+          // Not valid JSON — skip; could log if DEBUG is set
+          if (process.env.DEBUG) {
+            process.stderr.write(`[pi-delegate] Non-JSON stdout line: ${line}\n`);
+          }
+          return;
         }
-        return;
+
+        // Emit coarse progress for key event boundaries
+        switch (event.type) {
+          case 'agent_start':
+            options.onUpdate?.({
+              type: 'agent_start',
+              agent: (event as { type: 'agent_start'; agent?: string }).agent,
+            });
+            break;
+
+          case 'tool_start':
+            options.onUpdate?.({
+              type: 'tool_start',
+              tool: (event as { type: 'tool_start'; tool?: string }).tool,
+            });
+            break;
+
+          case 'tool_end':
+            options.onUpdate?.({
+              type: 'tool_end',
+              tool: (event as { type: 'tool_end'; tool?: string }).tool,
+            });
+            break;
+
+          case 'agent_end': {
+            const agentEndEvent = event as { type: 'agent_end'; agent?: string; messages?: Array<{ role: string; content?: Array<{ type: string; text?: string }> }>; result?: string };
+            // Capture result as fallback if no message_end was seen
+            if (agentEndEvent.result != null) {
+              agentEndResult = agentEndEvent.result;
+            }
+            // Also try extracting from messages array (actual pi --mode json format)
+            if (!agentEndResult && agentEndEvent.messages) {
+              const assistantMsg = agentEndEvent.messages.find(m => m.role === 'assistant');
+              if (assistantMsg?.content) {
+                const texts = assistantMsg.content
+                  .filter((c): c is { type: string; text: string } => c.type === 'text' && c.text != null)
+                  .map(c => c.text);
+                if (texts.length > 0) agentEndResult = texts.join('\n');
+              }
+            }
+            options.onUpdate?.({
+              type: 'agent_end',
+              agent: agentEndEvent.agent,
+            });
+            break;
+          }
+
+          case 'message_end': {
+            const msgEndEvent = event as { type: 'message_end'; message?: { role: string; content?: Array<{ type: string; text?: string }> } };
+            // Extract assistant text from message.content array (actual pi --mode json format)
+            if (msgEndEvent.message?.content) {
+              const assistantParts = msgEndEvent.message.content.filter(p => p.type === 'text' && p.text != null);
+              if (assistantParts.length > 0) {
+                output = assistantParts.map(p => p.text).join('\n');
+              }
+            }
+            break;
+          }
+
+          default:
+            // Unknown event — ignore
+            break;
+        }
+      });
+
+      // ── stderr: accumulate for error messages ─────────────────────────────────
+      child.stderr!.on('data', (chunk: Buffer) => {
+        stderrBuffer += chunk.toString();
+      });
+
+      // ── Timeout handling ──────────────────────────────────────────────────────
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      if (options.runTimeoutMs != null && options.runTimeoutMs > 0) {
+        timeoutHandle = setTimeout(() => {
+          if (settled) return;
+          timedOut = true;
+          killChild(child);
+        }, options.runTimeoutMs);
       }
 
-      // Emit coarse progress for key event boundaries
-      switch (event.type) {
-        case 'agent_start':
-          options.onUpdate?.({
-            type: 'agent_start',
-            agent: (event as { type: 'agent_start'; agent?: string }).agent,
-          });
-          break;
+      // ── Abort signal handling ─────────────────────────────────────────────────
+      const abortHandler = (): void => {
+        killChild(child);
+        // Resolve (not reject) with whatever was captured so far
+        // The child 'close' event will fire and settle the promise normally.
+      };
 
-        case 'tool_start':
-          options.onUpdate?.({
-            type: 'tool_start',
-            tool: (event as { type: 'tool_start'; tool?: string }).tool,
-          });
-          break;
-
-        case 'tool_end':
-          options.onUpdate?.({
-            type: 'tool_end',
-            tool: (event as { type: 'tool_end'; tool?: string }).tool,
-          });
-          break;
-
-        case 'agent_end': {
-          const agentEndEvent = event as { type: 'agent_end'; agent?: string; messages?: Array<{ role: string; content?: Array<{ type: string; text?: string }> }>; result?: string };
-          // Capture result as fallback if no message_end was seen
-          if (agentEndEvent.result != null) {
-            agentEndResult = agentEndEvent.result;
-          }
-          // Also try extracting from messages array (actual pi --mode json format)
-          if (!agentEndResult && agentEndEvent.messages) {
-            const assistantMsg = agentEndEvent.messages.find(m => m.role === 'assistant');
-            if (assistantMsg?.content) {
-              const texts = assistantMsg.content
-                .filter((c): c is { type: string; text: string } => c.type === 'text' && c.text != null)
-                .map(c => c.text);
-              if (texts.length > 0) agentEndResult = texts.join('\n');
-            }
-          }
-          options.onUpdate?.({
-            type: 'agent_end',
-            agent: agentEndEvent.agent,
-          });
-          break;
+      if (options.signal) {
+        if (options.signal.aborted) {
+          // Signal already fired before we even started — kill immediately
+          killChild(child);
+        } else {
+          options.signal.addEventListener('abort', abortHandler, { once: true });
         }
-
-        case 'message_end': {
-          const msgEndEvent = event as { type: 'message_end'; message?: { role: string; content?: Array<{ type: string; text?: string }> } };
-          // Extract assistant text from message.content array (actual pi --mode json format)
-          if (msgEndEvent.message?.content) {
-            const assistantParts = msgEndEvent.message.content.filter(p => p.type === 'text' && p.text != null);
-            if (assistantParts.length > 0) {
-              output = assistantParts.map(p => p.text).join('\n');
-            }
-          }
-          break;
-        }
-
-        default:
-          // Unknown event — ignore
-          break;
       }
-    });
 
-    // ── stderr: accumulate for error messages ─────────────────────────────────
-    child.stderr!.on('data', (chunk: Buffer) => {
-      stderrBuffer += chunk.toString();
-    });
-
-    // ── Timeout handling ──────────────────────────────────────────────────────
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    if (options.runTimeoutMs != null && options.runTimeoutMs > 0) {
-      timeoutHandle = setTimeout(() => {
+      // ── Child error (e.g. binary not found) ───────────────────────────────────
+      child.on('error', (err) => {
         if (settled) return;
-        timedOut = true;
-        killChild(child);
-      }, options.runTimeoutMs);
-    }
+        settled = true;
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        options.signal?.removeEventListener('abort', abortHandler);
+        reject(err);
+      });
 
-    // ── Abort signal handling ─────────────────────────────────────────────────
-    const abortHandler = (): void => {
-      killChild(child);
-      // Resolve (not reject) with whatever was captured so far
-      // The child 'close' event will fire and settle the promise normally.
-    };
+      // ── Child exit ────────────────────────────────────────────────────────────
+      child.on('close', (_code, _signal) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        options.signal?.removeEventListener('abort', abortHandler);
 
-    if (options.signal) {
-      if (options.signal.aborted) {
-        // Signal already fired before we even started — kill immediately
-        killChild(child);
-      } else {
-        options.signal.addEventListener('abort', abortHandler, { once: true });
-      }
-    }
+        if (timedOut) {
+          // A1: RESOLVE (never reject) on timeout. Rejecting here threw a non-Error
+          // object that escaped executeSingle's await (which has no try/catch around
+          // the resolved shape) and violated the never-throw contract. executeSingle
+          // inspects runResult.timedOut and maps it to a [BLOCKED:TIMEOUT] string, so
+          // we hand it the resolved shape it already expects.
+          resolve({ output: '', exitCode: -1, timedOut: true, stderr: stderrBuffer });
+          return;
+        }
 
-    // ── Child error (e.g. binary not found) ───────────────────────────────────
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-      options.signal?.removeEventListener('abort', abortHandler);
-      reject(err);
+        // Use message_end.content if captured; fall back to agent_end.result
+        const finalOutput = output !== '' ? output : agentEndResult;
+        const exitCode = child.exitCode ?? -1;
+
+        resolve({ output: finalOutput, exitCode, timedOut, stderr: stderrBuffer });
+      });
     });
-
-    // ── Child exit ────────────────────────────────────────────────────────────
-    child.on('close', (_code, _signal) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-      options.signal?.removeEventListener('abort', abortHandler);
-
-      if (timedOut) {
-        // eslint-disable-next-line prefer-promise-reject-errors
-        reject({ timedOut: true, stderr: stderrBuffer });
-        return;
-      }
-
-      // Use message_end.content if captured; fall back to agent_end.result
-      const finalOutput = output !== '' ? output : agentEndResult;
-      const exitCode = child.exitCode ?? -1;
-
-      resolve({ output: finalOutput, exitCode, timedOut });
-    });
-  });
+  } finally {
+    // B4: always free the spawn slot, whether the run resolved, rejected, or
+    // timed out. Without this a rejected spawn would leak a slot and eventually
+    // deadlock the pool. releaseSlot() is idempotent and a no-op when uncapped.
+    releaseSlot();
+  }
 }
