@@ -703,3 +703,193 @@ describe('runParallel error result string format (G11)', () => {
     expect(results[0].output).toContain('something broke');
   });
 });
+
+// ── Tests: runParallel concurrency clamping (B3) ──────────────────────────────
+//
+// Finding B3: concurrency values of 0, NaN, or negative must NOT produce zero
+// workers (which would cause tasks to hang forever). The code in parallel.ts
+// treats NaN/non-finite as the default (5) before Math.max(1, ...) clamps any
+// remaining non-positive value to at least 1 worker. These tests verify that all
+// tasks complete — which is only possible if at least 1 worker ran.
+
+describe('runParallel concurrency clamping (B3)', () => {
+  it('clamps concurrency:0 to at least 1 worker so tasks complete', async () => {
+    const tasks: ParallelTask[] = [
+      { task: 'task-0' },
+      { task: 'task-1' },
+    ];
+
+    const runOne = async (task: ParallelTask, index: number): Promise<string> => {
+      return `done: ${task.task}`;
+    };
+
+    // With concurrency: 0 a naive impl would start zero workers and hang forever.
+    // The B3 clamp guarantees Math.max(1, ...) lifts it to 1 so both tasks complete.
+    const results = await runParallel(tasks, { concurrency: 0 }, runOne);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].status).toBe('ok');
+    expect(results[0].output).toContain('task-0');
+    expect(results[1].status).toBe('ok');
+    expect(results[1].output).toContain('task-1');
+  });
+
+  it('clamps concurrency:NaN to default so tasks complete', async () => {
+    const tasks: ParallelTask[] = [
+      { task: 'task-A' },
+      { task: 'task-B' },
+    ];
+
+    const runOne = async (task: ParallelTask, index: number): Promise<string> => {
+      return `done: ${task.task}`;
+    };
+
+    // NaN propagates through Math.min/Math.max (IEEE 754), so the code first maps
+    // NaN to the default (5) before clamping. Both tasks must complete.
+    const results = await runParallel(tasks, { concurrency: NaN }, runOne);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].status).toBe('ok');
+    expect(results[0].output).toContain('task-A');
+    expect(results[1].status).toBe('ok');
+    expect(results[1].output).toContain('task-B');
+  });
+
+  it('clamps negative concurrency to at least 1 worker', async () => {
+    const tasks: ParallelTask[] = [
+      { task: 'task-X' },
+      { task: 'task-Y' },
+    ];
+
+    const runOne = async (task: ParallelTask, index: number): Promise<string> => {
+      return `done: ${task.task}`;
+    };
+
+    // Math.max(1, -5) = 1, so exactly 1 worker runs and both tasks complete serially.
+    const results = await runParallel(tasks, { concurrency: -5 }, runOne);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].status).toBe('ok');
+    expect(results[0].output).toContain('task-X');
+    expect(results[1].status).toBe('ok');
+    expect(results[1].output).toContain('task-Y');
+  });
+});
+
+// ── Tests: runParallel parent-signal composition (B1) ─────────────────────────
+//
+// Finding B1: when failFast is enabled, a failing task aborts siblings via an
+// internal AbortController. The FIX (T2.2) also composes the PARENT signal so
+// that a tool-level cancel ALSO reaches the children — previously the parent
+// signal was dropped entirely when failFast was on. These tests verify:
+//   1. Aborting the parent mid-run cancels remaining tasks even with failFast:true.
+//   2. Without failFast, the parent signal is forwarded unchanged to runOne.
+
+describe('runParallel parent-signal composition (B1)', () => {
+  it('aborting parent signal cancels tasks even with failFast:true', async () => {
+    // Use a slow mock so the parent abort fires while tasks are still running.
+    // spawnRun is already mocked at module level; override it for this test so
+    // executeSingle (which wraps spawnRun) simulates slow execution.
+    vi.mocked(spawnRun).mockImplementation(async (_binary, _args, _tempFiles, options) => {
+      // Simulate slow child: park for 200 ms so the parent abort can fire.
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, 200);
+        options?.signal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          reject(new Error('aborted by signal'));
+        }, { once: true });
+      });
+      return { output: 'slow ok', exitCode: 0, timedOut: false };
+    });
+
+    const controller = new AbortController();
+
+    const tasks: ParallelTask[] = [
+      { task: 'slow-task-0' },
+      { task: 'slow-task-1' },
+      { task: 'slow-task-2' },
+    ];
+
+    // Run with failFast:true AND the parent signal so both cancellation paths
+    // (sibling-abort and parent-abort) compose via AbortSignal.any().
+    const runOneSignalsReceived: Array<AbortSignal | undefined> = [];
+    const runOne = vi.fn(async (task: ParallelTask, index: number, signal?: AbortSignal): Promise<string> => {
+      runOneSignalsReceived.push(signal);
+      // Simulate slow task: yield so the parent abort arrives between tasks.
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, 200);
+        signal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          reject(new Error('cancelled by composed signal'));
+        }, { once: true });
+      });
+      return `ok: ${task.task}`;
+    });
+
+    // Abort the parent after a short delay so the first task starts but later
+    // tasks (queued at concurrency:1) are short-circuited.
+    setTimeout(() => controller.abort(), 30);
+
+    const results = await runParallel(
+      tasks,
+      { concurrency: 1, failFast: true, signal: controller.signal },
+      runOne,
+    );
+
+    // At least one result must exist and the parent signal must be aborted.
+    expect(results).toHaveLength(3);
+    expect(controller.signal.aborted).toBe(true);
+
+    // The cancelled siblings must carry the blocked-result label, not succeed.
+    const cancelledResults = results.filter(r => r.output.includes('cancelled before start'));
+    expect(cancelledResults.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('forwards parent signal unchanged when failFast is false', async () => {
+    // Reset spawnRun to the default fast mock for this test.
+    vi.mocked(spawnRun).mockResolvedValue({ output: 'ok', exitCode: 0, timedOut: false });
+
+    const parentController = new AbortController();
+    const capturedSignals: Array<AbortSignal | undefined> = [];
+
+    const tasks: ParallelTask[] = [
+      { task: 'task-p1' },
+      { task: 'task-p2' },
+    ];
+
+    const runOne = vi.fn(async (task: ParallelTask, index: number, signal?: AbortSignal): Promise<string> => {
+      capturedSignals.push(signal);
+      return `ok: ${task.task}`;
+    });
+
+    // Without failFast there is no internal failFastController, so the parent
+    // signal is forwarded as-is (no AbortSignal.any wrapping).
+    await runParallel(
+      tasks,
+      { failFast: false, signal: parentController.signal },
+      runOne,
+    );
+
+    expect(runOne).toHaveBeenCalledTimes(2);
+
+    // Every runOne call must have received a signal (the parent signal or a
+    // composition of it). Since failFast is false, the code sets
+    // runSignal = options.signal — the exact same object.
+    for (const sig of capturedSignals) {
+      expect(sig).toBeDefined();
+      // The signal is live (parent has not been aborted).
+      expect(sig?.aborted).toBe(false);
+    }
+
+    // Aborting the parent after the run must not affect the (already-resolved) results,
+    // but proves the signal object was the real parent (it becomes aborted).
+    parentController.abort();
+    expect(parentController.signal.aborted).toBe(true);
+
+    // The captured signals are the same object as the parent signal (no wrapping
+    // when failFast is false), confirming forwarding-unchanged behaviour.
+    for (const sig of capturedSignals) {
+      expect(sig).toBe(parentController.signal);
+    }
+  });
+});
