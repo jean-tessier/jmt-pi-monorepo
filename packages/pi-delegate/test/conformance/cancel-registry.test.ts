@@ -7,7 +7,7 @@
  * - Abort triggering of all registered controllers
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { cancelRegistry } from '../../src/parent/cancel-registry.js';
 
 describe('cancelRegistry', () => {

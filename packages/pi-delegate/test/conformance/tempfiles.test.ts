@@ -7,9 +7,8 @@
  * - Directory structure: promptFile, schemaFile, outputFile paths are correct
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
-import * as os from 'os';
 import * as path from 'path';
 import { createTempRunFiles } from '../../src/parent/tempfiles.js';
 

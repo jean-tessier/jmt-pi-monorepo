@@ -9,7 +9,7 @@
  * package which only has `./compile` (without "er").
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { compileSchema, isJsonSchemaObject } from '../../src/shared/schema.js';
 
 // ---------------------------------------------------------------------------
