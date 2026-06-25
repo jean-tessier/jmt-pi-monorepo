@@ -16,6 +16,12 @@ import { compileSchema, isJsonSchemaObject } from '../../src/shared/schema.js';
 // RED test: loading via jiti with pi-compatible aliases (typebox v1.1)
 // ---------------------------------------------------------------------------
 describe('schema module resolution under pi', () => {
+  // This test does a real jiti dynamic import with requireCache:false, which
+  // transpiles TS on the fly — a CPU-heavy ~1 s operation. It sits comfortably
+  // under the 5 s default in isolation, but the on-the-fly transform can exceed
+  // it under heavy concurrent load (e.g. multiple suites oversubscribing the CPU),
+  // causing a spurious timeout. A generous explicit timeout (30 s, ~20-30x normal)
+  // tolerates that load while still failing fast if the import genuinely hangs.
   it('loads schema module via jiti with pi-compatible typebox v1.1 aliases', async () => {
     // This simulates how pi's extension loader resolves @sinclair/typebox
     // using jiti aliases that point to typebox v1.1 (which has ./compile, not ./compiler)
@@ -33,7 +39,7 @@ describe('schema module resolution under pi', () => {
     const mod = await _jiti.import(new URL('../../src/shared/schema.ts', import.meta.url).href, {}) as Record<string, unknown>;
     expect(mod.compileSchema).toBeDefined();
     expect(mod.isJsonSchemaObject).toBeDefined();
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------

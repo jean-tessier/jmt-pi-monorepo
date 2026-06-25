@@ -787,21 +787,15 @@ describe('runParallel concurrency clamping (B3)', () => {
 
 describe('runParallel parent-signal composition (B1)', () => {
   it('aborting parent signal cancels tasks even with failFast:true', async () => {
-    // Use a slow mock so the parent abort fires while tasks are still running.
-    // spawnRun is already mocked at module level; override it for this test so
-    // executeSingle (which wraps spawnRun) simulates slow execution.
-    vi.mocked(spawnRun).mockImplementation(async (_binary, _args, _tempFiles, options) => {
-      // Simulate slow child: park for 200 ms so the parent abort can fire.
-      await new Promise<void>((resolve, reject) => {
-        const t = setTimeout(resolve, 200);
-        options?.signal?.addEventListener('abort', () => {
-          clearTimeout(t);
-          reject(new Error('aborted by signal'));
-        }, { once: true });
-      });
-      return { output: 'slow ok', exitCode: 0, timedOut: false };
-    });
-
+    // DETERMINISTIC (no wall-clock race): an earlier version raced a 30 ms parent
+    // abort against 200 ms task parks under real timers, which flaked under heavy
+    // concurrent suite load when the timers drifted. Instead we drive the abort
+    // off an explicit "first task is in-flight" cue: the parent is aborted the
+    // instant task 0 has entered runOne and wired its abort listener, so the
+    // siblings queued behind concurrency:1 are always short-circuited.
+    //
+    // (This test passes runOne directly to runParallel, so the module-level
+    // spawnRun mock is never exercised here — no override needed.)
     const controller = new AbortController();
 
     const tasks: ParallelTask[] = [
@@ -810,14 +804,20 @@ describe('runParallel parent-signal composition (B1)', () => {
       { task: 'slow-task-2' },
     ];
 
+    // Resolves once task 0 is parked inside runOne — our cue to abort the parent.
+    let signalFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { signalFirstStarted = resolve; });
+
     // Run with failFast:true AND the parent signal so both cancellation paths
     // (sibling-abort and parent-abort) compose via AbortSignal.any().
-    const runOneSignalsReceived: Array<AbortSignal | undefined> = [];
     const runOne = vi.fn(async (task: ParallelTask, index: number, signal?: AbortSignal): Promise<string> => {
-      runOneSignalsReceived.push(signal);
-      // Simulate slow task: yield so the parent abort arrives between tasks.
+      if (index === 0) signalFirstStarted();
+      // Park until the composed signal aborts. The generous safety timeout never
+      // fires on the happy path (the abort below clears it on a microtask, long
+      // before 1 s of wall clock) — it exists only so a B1 regression that drops
+      // the parent signal fails via assertion instead of hanging to the timeout.
       await new Promise<void>((resolve, reject) => {
-        const t = setTimeout(resolve, 200);
+        const t = setTimeout(resolve, 1000);
         signal?.addEventListener('abort', () => {
           clearTimeout(t);
           reject(new Error('cancelled by composed signal'));
@@ -826,23 +826,31 @@ describe('runParallel parent-signal composition (B1)', () => {
       return `ok: ${task.task}`;
     });
 
-    // Abort the parent after a short delay so the first task starts but later
-    // tasks (queued at concurrency:1) are short-circuited.
-    setTimeout(() => controller.abort(), 30);
-
-    const results = await runParallel(
+    const resultsPromise = runParallel(
       tasks,
       { concurrency: 1, failFast: true, signal: controller.signal },
       runOne,
     );
 
-    // At least one result must exist and the parent signal must be aborted.
+    // Abort the parent only once task 0 is genuinely in-flight — deterministic,
+    // no reliance on relative timer ordering.
+    await firstStarted;
+    controller.abort();
+
+    const results = await resultsPromise;
+
+    // All indices populated and the parent signal is aborted.
     expect(results).toHaveLength(3);
     expect(controller.signal.aborted).toBe(true);
 
-    // The cancelled siblings must carry the blocked-result label, not succeed.
+    // runOne ran for task 0 only; the two queued siblings were short-circuited
+    // before runOne via the pre-spawn aborted-check (B2) — proving the parent
+    // abort reached the composed run signal even under failFast (B1).
+    expect(runOne).toHaveBeenCalledTimes(1);
+
+    // Both cancelled siblings carry the blocked-result label rather than succeeding.
     const cancelledResults = results.filter(r => r.output.includes('cancelled before start'));
-    expect(cancelledResults.length).toBeGreaterThanOrEqual(1);
+    expect(cancelledResults).toHaveLength(2);
   });
 
   it('forwards parent signal unchanged when failFast is false', async () => {
