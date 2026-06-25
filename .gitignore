@@ -2,3 +2,7 @@ node_modules/
 pnpm-lock.yaml
 parallel-work
 dist
+
+# Claude Code local scaffolding — throwaway / per-user, never shared
+.claude/worktrees/
+.claude/settings.local.json
