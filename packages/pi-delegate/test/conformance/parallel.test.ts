@@ -370,6 +370,75 @@ describe('runParallel', () => {
     await runParallel(tasks, { concurrency: 5, maxConcurrency: 3 }, runOne);
     expect(maxInFlight).toBeLessThanOrEqual(3);
   });
+
+  // ── Finding B3: concurrency clamp ───────────────────────────────────────────
+
+  it('clamps concurrency 0 up to at least 1 instead of hanging', async () => {
+    const tasks: ParallelTask[] = [{ task: 'a' }, { task: 'b' }];
+    const ran: number[] = [];
+    const runOne = async (_t: ParallelTask, idx: number) => {
+      ran.push(idx);
+      return `ok-${idx}`;
+    };
+
+    // concurrency: 0 would start zero workers and hang forever pre-fix.
+    const results = await runParallel(tasks, { concurrency: 0 }, runOne);
+    expect(results).toHaveLength(2);
+    expect(results[0].status).toBe('ok');
+    expect(results[1].status).toBe('ok');
+    expect(ran.sort()).toEqual([0, 1]);
+  });
+
+  it('clamps negative concurrency up to at least 1', async () => {
+    const tasks: ParallelTask[] = [{ task: 'a' }];
+    const results = await runParallel(tasks, { concurrency: -5 }, async () => 'ok');
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('ok');
+  });
+
+  // ── Finding B1: parent signal still reaches children under failFast ─────────
+
+  it('composes parent signal with failFast so parent cancel reaches runOne', async () => {
+    const tasks: ParallelTask[] = [{ task: 'a' }, { task: 'b' }];
+    const parent = new AbortController();
+    const seenAbortedAtCall: boolean[] = [];
+
+    const runOne = async (_t: ParallelTask, idx: number, signal?: AbortSignal) => {
+      seenAbortedAtCall[idx] = signal?.aborted ?? false;
+      // Abort the PARENT mid-flight after the first task observes a live signal.
+      if (idx === 0) parent.abort();
+      return `ok-${idx}`;
+    };
+
+    const results = await runParallel(
+      tasks,
+      { concurrency: 1, failFast: true, signal: parent.signal },
+      runOne,
+    );
+
+    // First task saw a live (non-aborted) composed signal.
+    expect(seenAbortedAtCall[0]).toBe(false);
+    // After the parent aborted, the SECOND task is short-circuited (B2) because
+    // the composed signal (parent ∨ failFast) is now aborted — proving the parent
+    // signal is part of the composition (B1), not dropped under failFast.
+    expect(results[1].status).toBe('error');
+    expect(results[1].output).toContain('cancelled before start');
+  });
+
+  it('forwards the parent signal unchanged when failFast is off', async () => {
+    const tasks: ParallelTask[] = [{ task: 'a' }];
+    const parent = new AbortController();
+    let forwarded: AbortSignal | undefined;
+
+    await runParallel(
+      tasks,
+      { signal: parent.signal, failFast: false },
+      async (_t, _i, signal) => { forwarded = signal; return 'ok'; },
+    );
+
+    // Without failFast, the exact parent signal instance is forwarded.
+    expect(forwarded).toBe(parent.signal);
+  });
 });
 
 // ── Tests: ParallelResult shape ──────────────────────────────────────────────
@@ -428,10 +497,12 @@ describe('executeParallel signal forwarding', () => {
     activate(mock.api);
     const tool = mock.tools[0];
 
-    // Pre-aborted signal makes the linkage synchronous and deterministic:
-    // executeSingle immediately aborts its AbortController when parentSignal.aborted === true.
+    // A LIVE (non-aborted) parent signal must thread all the way through
+    // executeParallel → runParallel → executeSingle → spawnRun, proving the
+    // parent cancellation channel reaches each child slot (AGENTS.md signal
+    // forwarding invariant). Using a live signal (not pre-aborted) so the spawn
+    // actually happens — see the next test for the pre-aborted short-circuit.
     const abortController = new AbortController();
-    abortController.abort();
 
     await tool.execute(
       'call-signal-test',
@@ -441,11 +512,36 @@ describe('executeParallel signal forwarding', () => {
       {} as any,
     );
 
-    // spawnRun must have been called with an already-aborted signal,
-    // proving the parent abort propagated through executeParallel → executeSingle.
     expect(vi.mocked(spawnRun)).toHaveBeenCalledOnce();
     const callOptions = vi.mocked(spawnRun).mock.calls[0][3] as { signal?: AbortSignal };
-    expect(callOptions.signal?.aborted).toBe(true);
+    // The signal is forwarded (defined) and reflects the parent's state.
+    expect(callOptions.signal).toBeDefined();
+    expect(callOptions.signal?.aborted).toBe(false);
+  });
+
+  it('short-circuits a pre-aborted parent signal without spawning a child (B2)', async () => {
+    activate(mock.api);
+    const tool = mock.tools[0];
+
+    // Pre-aborted parent signal: per finding B2, runParallel must NOT spawn a
+    // child only to immediately kill it — it short-circuits to a blocked result.
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await tool.execute(
+      'call-preaborted',
+      { parallel: [{ task: 'signal test task' }] },
+      abortController.signal,
+      undefined,
+      {} as any,
+    );
+
+    // No child was spawned (B2 short-circuit).
+    expect(vi.mocked(spawnRun)).not.toHaveBeenCalled();
+    // The result is a labeled blocked string (never-throw contract upheld).
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+    expect(text).toContain('[BLOCKED:ERROR]');
+    expect(text).toContain('cancelled before start');
   });
 });
 
