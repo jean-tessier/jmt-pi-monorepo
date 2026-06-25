@@ -21,16 +21,16 @@ describe('schema module resolution under pi', () => {
     // using jiti aliases that point to typebox v1.1 (which has ./compile, not ./compiler)
     const typeboxDir = '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox';
 
-    const { default: jiti } = await import('jiti');
+    const { default: jiti } = await import('jiti') as unknown as { default: (filename: string, opts?: import('jiti').JITIOptions) => import('jiti').JITI };
     const _jiti = jiti(import.meta.url, {
-      moduleCache: false,
+      requireCache: false,
       alias: {
         '@sinclair/typebox': typeboxDir,
         '@sinclair/typebox/compile': typeboxDir + '/build/compile/index.mjs',
       },
     });
 
-    const mod = await _jiti.import(new URL('../../src/shared/schema.ts', import.meta.url).href);
+    const mod = await _jiti.import(new URL('../../src/shared/schema.ts', import.meta.url).href, {}) as Record<string, unknown>;
     expect(mod.compileSchema).toBeDefined();
     expect(mod.isJsonSchemaObject).toBeDefined();
   });
